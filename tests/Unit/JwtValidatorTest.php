@@ -215,4 +215,30 @@ final class JwtValidatorTest extends TestCase
         $this->expectException(TokenValidationError::class);
         $validator->validate($this->sign($this->goodClaims()));
     }
+
+    public function testMalformedJwksModulusMappedToTokenValidationError(): void
+    {
+        // JWKS 엔트리의 "n"이 배열(비-스칼라)이면 Firebase\JWT\JWK::parseKey가
+        // createPemFromModulusAndExponent(string $n, ...)에 array를 넘겨 \TypeError를 던진다
+        // (\TypeError는 \Error 상속이지 \Exception이 아니다). validate()는 이를 TokenValidationError로
+        // 반드시 변환해야 한다(경계 불변식) — 진짜 키쌍으로 서명한 문법적으로 유효한 토큰을 사용해
+        // 서명 검증 이전에 파싱 단계에서 \TypeError가 나는 경로를 정확히 행사한다.
+        $cfg = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'it-realm', clientId: 'it-client');
+        $jwk = $this->key['jwk'];
+        $jwk['n'] = ['x']; // 비-스칼라 n — string 타입힌트 위반
+        $http = new class ($jwk) implements ClientInterface {
+            /** @param array<string,mixed> $jwk */
+            public function __construct(private array $jwk) {}
+
+            public function sendRequest(RequestInterface $r): ResponseInterface
+            {
+                return new Response(200, [], json_encode(['keys' => [$this->jwk]], JSON_THROW_ON_ERROR));
+            }
+        };
+        $f = new HttpFactory();
+        $store = new JwksStore('http://kc:8080/realms/it-realm/protocol/openid-connect/certs', $http, $f);
+        $validator = new JwtValidator($cfg, new OidcEndpoints($cfg), $store);
+        $this->expectException(TokenValidationError::class);
+        $validator->validate($this->sign($this->goodClaims()));
+    }
 }

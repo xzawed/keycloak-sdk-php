@@ -42,18 +42,27 @@ final class JwtValidator
 
         // (2) JWKS에서 kid로 키 조회(DoS-safe, JwksStore) → firebase Key → 서명/exp/nbf 검증(클록 스큐 적용)
         $jwk = $this->jwks->getKeyByKid($kid);
+        $prevLeeway = FbJwt::$leeway;
         FbJwt::$leeway = $this->config->clockSkew;
         try {
-            $key = JWK::parseKey($jwk, self::PINNED_ALG);
-            if ($key === null) {
-                throw new TokenValidationError('unusable JWKS key');
+            try {
+                $key = JWK::parseKey($jwk, self::PINNED_ALG);
+                if ($key === null) {
+                    throw new TokenValidationError('unusable JWKS key');
+                }
+                $payload = FbJwt::decode($jwt, $key);
+            } catch (TokenValidationError $e) {
+                throw $e; // 우리 자신의 예외 — 재래핑하지 않는다.
+            } catch (\Throwable $e) {
+                // firebase SignatureInvalidException/ExpiredException/BeforeValidException(모두
+                // \UnexpectedValueException 상속) + SPL 예외(미지원 alg·손상된 JWKS 키 등) +
+                // \Error/\TypeError(예: JWK::parseKey가 배열/객체 n·e를 만나 createPemFromModulusAndExponent에
+                // string 아닌 값을 넘길 때) 전부 여기로 수렴 — \Throwable 전체를 잡아야
+                // "validate()를 벗어나는 firebase/SPL/Error 예외는 없다" 경계 불변식이 유지된다.
+                throw new TokenValidationError('token verification failed: ' . $e->getMessage(), previous: $e);
             }
-            $payload = FbJwt::decode($jwt, $key);
-        } catch (\UnexpectedValueException | \InvalidArgumentException | \DomainException $e) {
-            // firebase SignatureInvalidException/ExpiredException/BeforeValidException(모두
-            // \UnexpectedValueException 상속) + SPL 예외(미지원 alg·손상된 JWKS 키 등) 전부 여기로 수렴.
-            // TokenValidationError는 \RuntimeException 계열이라 이 catch에 걸리지 않는다(이중 래핑 방지).
-            throw new TokenValidationError('token verification failed: ' . $e->getMessage(), previous: $e);
+        } finally {
+            FbJwt::$leeway = $prevLeeway;
         }
 
         // (3) firebase는 서명·exp(있으면)·nbf만 검증한다 — exp 필수·iss 정확일치·aud 포함은 우리가 강제.
