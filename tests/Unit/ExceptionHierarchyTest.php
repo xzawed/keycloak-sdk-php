@@ -16,14 +16,19 @@ final class ExceptionHierarchyTest extends TestCase
         foreach ([KeycloakConfigError::class, KeycloakAuthError::class, KeycloakTransportError::class,
             KeycloakAdminError::class, KeycloakNotFoundError::class, KeycloakConflictError::class,
             KeycloakForbiddenError::class, TokenValidationError::class] as $cls) {
-            self::assertTrue(is_a($cls, KeycloakException::class, true), "$cls should extend KeycloakException");
+            $parents = class_parents($cls);
+            self::assertIsArray($parents, "$cls should be a loadable class");
+            self::assertArrayHasKey(KeycloakException::class, $parents, "$cls should extend KeycloakException");
         }
     }
+
     public function testAdminSubtypesExtendAdminError(): void
     {
-        self::assertTrue(is_a(KeycloakNotFoundError::class, KeycloakAdminError::class, true));
-        self::assertTrue(is_a(KeycloakConflictError::class, KeycloakAdminError::class, true));
-        self::assertTrue(is_a(KeycloakForbiddenError::class, KeycloakAdminError::class, true));
+        foreach ([KeycloakNotFoundError::class, KeycloakConflictError::class, KeycloakForbiddenError::class] as $cls) {
+            $parents = class_parents($cls);
+            self::assertIsArray($parents, "$cls should be a loadable class");
+            self::assertArrayHasKey(KeycloakAdminError::class, $parents, "$cls should extend KeycloakAdminError");
+        }
     }
     public function testAdminErrorCarriesStatus(): void
     {
