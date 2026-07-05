@@ -1,0 +1,66 @@
+{
+  "realm": "it-realm",
+  "enabled": true,
+  "sslRequired": "none",
+  "clients": [
+    {
+      "clientId": "it-client",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "it-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "it-client-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "it-client",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-it-client",
+      "enabled": true,
+      "serviceAccountClientId": "it-client",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "manage-clients",
+          "view-clients",
+          "manage-realm",
+          "view-realm"
+        ]
+      }
+    },
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.com",
+      "firstName": "Alice",
+      "lastName": "Example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-password",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
