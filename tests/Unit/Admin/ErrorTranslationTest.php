@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Tests\Unit\Admin;
 
 use PHPUnit\Framework\TestCase;
-use GuzzleHttp\Exception\{ClientException, ConnectException, ServerException};
+use Fschmtt\Keycloak\Exception\BuilderException;
+use GuzzleHttp\Exception\{ClientException, ConnectException, RequestException, ServerException};
 use GuzzleHttp\Psr7\{Request, Response};
 use Xzawed\Keycloak\Admin\ErrorTranslation;
-use Xzawed\Keycloak\Exception\{KeycloakNotFoundError, KeycloakConflictError, KeycloakForbiddenError, KeycloakAdminError, KeycloakTransportError};
+use Xzawed\Keycloak\Exception\{KeycloakNotFoundError, KeycloakConflictError, KeycloakForbiddenError, KeycloakAdminError, KeycloakConfigError, KeycloakTransportError};
 
 final class ErrorTranslationTest extends TestCase
 {
@@ -41,6 +42,16 @@ final class ErrorTranslationTest extends TestCase
     {
         $this->expectException(KeycloakTransportError::class);
         ErrorTranslation::call(fn () => throw new ConnectException('refused', new Request('GET', '/')));
+    }
+    public function testBuilderExceptionMappedToConfig(): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        ErrorTranslation::call(fn () => throw new BuilderException('missing base url'));
+    }
+    public function testBaseRequestExceptionMappedToTransport(): void
+    {
+        $this->expectException(KeycloakTransportError::class);
+        ErrorTranslation::call(fn () => throw new RequestException('cURL error 60: SSL certificate problem', new Request('GET', 'https://kc/')));
     }
     public function testPassesThroughReturn(): void
     {

@@ -7,6 +7,7 @@ namespace Xzawed\Keycloak\Admin;
 use Fschmtt\Keycloak\Exception\BuilderException;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Exception\ServerException;
 use Xzawed\Keycloak\Exception\KeycloakAdminError;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
@@ -41,6 +42,8 @@ final class ErrorTranslation
             throw new KeycloakAdminError($e->getMessage(), $e->getResponse()->getStatusCode(), $e);
         } catch (ConnectException $e) {
             throw new KeycloakTransportError('admin request unreachable', previous: $e);
+        } catch (RequestException $e) {
+            throw new KeycloakTransportError('admin request failed', previous: $e);
         } catch (BuilderException $e) {
             throw new KeycloakConfigError($e->getMessage(), previous: $e);
         }
