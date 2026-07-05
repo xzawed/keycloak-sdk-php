@@ -51,7 +51,11 @@ final class AuthClient
         return new AuthorizationRequest(url: $url, state: $this->provider->getState(), codeVerifier: (string) $verifier);
     }
 
-    public function exchangeCode(string $code, string $state, string $codeVerifier): TokenSet
+    /**
+     * Authorization-code + PKCE 토큰 교환. 콜백에서 OAuth `state`를 createAuthorizationRequest()가 발급한
+     * 값과 대조하는 것은 호출자 책임이다(SDK는 무상태라 state를 검증하지 않는다 — Node/Go/C# SDK와 동형).
+     */
+    public function exchangeCode(string $code, string $codeVerifier): TokenSet
     {
         $this->provider->setPkceCode($codeVerifier);
 

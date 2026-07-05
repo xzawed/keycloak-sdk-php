@@ -31,4 +31,18 @@ final class AuthMappingTest extends TestCase
         self::assertTrue($ir->active);
         self::assertSame('alice', $ir->username);
     }
+
+    public function testCreateAuthorizationRequestUsesPkceS256(): void
+    {
+        $cfg = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'it-realm', clientId: 'it-client', clientSecret: 's', redirectUri: 'http://app/cb');
+        $endpoints = new OidcEndpoints($cfg);
+        $guzzle = new Client();  // not used — createAuthorizationRequest makes no HTTP call
+        $validator = new JwtValidator($cfg, $endpoints, new JwksStore($endpoints->jwks(), $guzzle, new HttpFactory()));
+        $auth = new AuthClient($cfg, $endpoints, $validator, $guzzle);
+        $req = $auth->createAuthorizationRequest();
+        self::assertStringContainsString('code_challenge_method=S256', $req->url);
+        self::assertStringContainsString('code_challenge=', $req->url);
+        self::assertNotSame('', $req->codeVerifier);   // the PKCE verifier is captured
+        self::assertNotSame('', $req->state);
+    }
 }
