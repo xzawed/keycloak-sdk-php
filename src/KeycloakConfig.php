@@ -8,8 +8,6 @@ use Xzawed\Keycloak\Exception\KeycloakConfigError;
 
 /**
  * 불변 설정. 시크릿은 PHP 관용상 string이며 마스킹으로 심층방어(char[] 소거는 PHP에서 불가 — 과대광고 금지).
- *
- * @param list<string> $scopes
  */
 final readonly class KeycloakConfig
 {
@@ -19,7 +17,7 @@ final readonly class KeycloakConfig
     public array $scopes;
 
     /**
-     * @param list<string> $scopes
+     * @param array<int, string> $scopes
      */
     public function __construct(
         string $serverUrl,
@@ -43,7 +41,7 @@ final readonly class KeycloakConfig
         }
         // 후행 슬래시 제거(엔드포인트 조립 규약)
         $this->serverUrl = rtrim($serverUrl, '/');
-        $this->scopes = $scopes;
+        $this->scopes = array_values($scopes);
     }
 
     public function __toString(): string

@@ -28,6 +28,16 @@ final class KeycloakConfigTest extends TestCase
         $this->expectException(KeycloakConfigError::class);
         new KeycloakConfig(serverUrl: 'http://kc:8080', realm: '', clientId: 'c');
     }
+    public function testMissingClientIdThrows(): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: '');
+    }
+    public function testScopesNormalizedToList(): void
+    {
+        $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', scopes: [0 => 'openid', 2 => 'email']);
+        self::assertSame(['openid', 'email'], $c->scopes);   // array_values reindexes to a list
+    }
     public function testToStringMasksSecret(): void
     {
         $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', clientSecret: 'super-secret');
