@@ -29,4 +29,15 @@ final class KeycloakClientTest extends TestCase
         self::assertSame(AdminClient::class, (new \ReflectionObject($a1))->getName());
         self::assertSame($a1, $a2);   // 캐시
     }
+
+    public function testCloseInvalidatesAdminCache(): void
+    {
+        // AdminClient 생성자는 네트워크 I/O 없이 clientSecret 검증 + 객체 조립만 하므로
+        // 네트워크 없이 unit 테스트 가능 — close() 후 admin()이 새 인스턴스를 지연생성함을 검증한다.
+        $client = KeycloakClient::create($this->cfg());
+        $before = $client->admin();
+        $client->close();
+        $after = $client->admin();
+        self::assertNotSame($before, $after);
+    }
 }

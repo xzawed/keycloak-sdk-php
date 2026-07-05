@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\GuzzleException;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use League\OAuth2\Client\Token\AccessToken;
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
+use Xzawed\Keycloak\Exception\KeycloakException;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Internal\PkceKeycloakProvider;
 use Xzawed\Keycloak\Token\AuthorizationRequest;
@@ -80,7 +81,9 @@ final class AuthClient
     public function introspect(string $token): IntrospectionResult
     {
         // RFC 7662 — league/stevenmaguire 미제공, 손수 POST(client_secret_basic)
-        $basic = base64_encode($this->config->clientId . ':' . ($this->config->clientSecret ?? ''));
+        // RFC 6749 §2.3.1: Basic 자격증명은 각 구성요소를 먼저 percent-encode한다
+        // (secret에 ':'/예약문자가 있어도 자격증명이 깨지지 않도록).
+        $basic = base64_encode(rawurlencode($this->config->clientId) . ':' . rawurlencode($this->config->clientSecret ?? ''));
         try {
             $response = $this->http->request('POST', $this->endpoints->introspection(), [
                 'headers' => ['Authorization' => 'Basic ' . $basic, 'Content-Type' => 'application/x-www-form-urlencoded'],
@@ -90,6 +93,10 @@ final class AuthClient
             throw new KeycloakTransportError('introspection unreachable', previous: $e);
         } catch (GuzzleException $e) {
             throw new KeycloakAuthError('introspection failed', previous: $e);
+        } catch (KeycloakException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new KeycloakTransportError('introspection failed unexpectedly', previous: $e);
         }
         $json = json_decode((string) $response->getBody(), true);
         if (!is_array($json)) {
@@ -121,6 +128,10 @@ final class AuthClient
             throw new KeycloakTransportError('logout unreachable', previous: $e);
         } catch (GuzzleException $e) {
             throw new KeycloakAuthError('logout failed', previous: $e);
+        } catch (KeycloakException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            throw new KeycloakTransportError('logout failed unexpectedly', previous: $e);
         }
     }
 
@@ -143,6 +154,13 @@ final class AuthClient
             // 던진다(IdentityProviderException이 아님 — OAuth 에러 바디가 아니라 응답 자체가 깨진 경우).
             // JwksStore가 동일 상황(비-JSON 응답)을 KeycloakTransportError로 매핑하는 것과 동형.
             throw new KeycloakTransportError('token endpoint returned unexpected response', previous: $e);
+        } catch (\Throwable $e) {
+            // league/oauth2-client 및 그 하위 의존성이 던질 수 있는 그 밖의 미분류 예외까지 전부
+            // 여기로 수렴시켜 "getAccessToken을 벗어나는 미분류 하위 예외는 없다" 경계를 보장한다.
+            // (KeycloakException pass-through 분기는 넣지 않는다 — $this->provider->getAccessToken()은
+            // league의 완전히 타입드된 메서드라 PHPStan이 우리 자신의 예외가 여기서 절대 던져지지 않음을
+            // 증명하므로 그 분기는 도달불가 dead catch로 확정 보고된다: catch.neverThrown.)
+            throw new KeycloakTransportError('token request failed', previous: $e);
         }
         if (!$token instanceof AccessToken) {
             throw new KeycloakAuthError('unexpected access token implementation');

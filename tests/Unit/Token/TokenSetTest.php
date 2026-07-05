@@ -31,4 +31,38 @@ final class TokenSetTest extends TestCase
         self::assertStringNotContainsString('secret-at', $s);
         self::assertStringNotContainsString('secret-rt', $s);
     }
+
+    public function testFromArrayParsesIdTokenScopeAndTokenType(): void
+    {
+        $ts = TokenSet::fromArray([
+            'access_token' => 'at',
+            'token_type' => 'Bearer',
+            'id_token' => 'idt',
+            'scope' => 'openid profile',
+            'expires_in' => 60,
+        ], now: 1000);
+        self::assertSame('Bearer', $ts->tokenType);
+        self::assertSame('idt', $ts->idToken);
+        self::assertSame('openid profile', $ts->scope);
+    }
+
+    public function testFromArrayWithoutExpiresInLeavesExpiresAtNullAndNeverExpired(): void
+    {
+        $ts = TokenSet::fromArray(['access_token' => 'at']);
+        self::assertNull($ts->expiresAt);
+        self::assertSame(0, $ts->expiresIn);
+        self::assertFalse($ts->isExpired());
+    }
+
+    public function testFromArrayCoercesNonStringAndNonIntScalarValues(): void
+    {
+        // toStr()의 int/float/bool 분기 + toInt()의 float/numeric-string 분기를 노출한다
+        // (신뢰된 응답이라도 일부 IdP 구현이 숫자형을 문자열이 아닌 그대로 내려보낼 수 있음).
+        $ts = TokenSet::fromArray(['access_token' => 'at', 'token_type' => 1, 'expires_in' => 60.0], now: 1000);
+        self::assertSame('1', $ts->tokenType);
+        self::assertSame(60, $ts->expiresIn);
+
+        $ts2 = TokenSet::fromArray(['access_token' => 'at', 'expires_in' => '60'], now: 1000);
+        self::assertSame(60, $ts2->expiresIn);
+    }
 }

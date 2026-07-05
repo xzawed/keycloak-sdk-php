@@ -30,6 +30,7 @@ final class KeycloakClient
             'connect_timeout' => $config->connectTimeout,
             'timeout' => $config->readTimeout,
             'verify' => true,
+            'http_errors' => true,
         ]);
         $factory = new HttpFactory();
         $jwks = new JwksStore($endpoints->jwks(), $guzzle, $factory);

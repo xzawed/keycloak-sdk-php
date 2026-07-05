@@ -15,6 +15,7 @@ final class OidcEndpointsTest extends TestCase
         $e = new OidcEndpoints(new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'it-realm', clientId: 'c'));
         self::assertSame('http://kc:8080/realms/it-realm', $e->issuer());
         self::assertSame('http://kc:8080/realms/it-realm/protocol/openid-connect/token', $e->token());
+        self::assertSame('http://kc:8080/realms/it-realm/protocol/openid-connect/auth', $e->authorization());
         self::assertSame('http://kc:8080/realms/it-realm/protocol/openid-connect/token/introspect', $e->introspection());
         self::assertSame('http://kc:8080/realms/it-realm/protocol/openid-connect/logout', $e->endSession());
         self::assertSame('http://kc:8080/realms/it-realm/protocol/openid-connect/certs', $e->jwks());

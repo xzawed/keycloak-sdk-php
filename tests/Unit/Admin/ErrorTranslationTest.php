@@ -6,6 +6,7 @@ namespace Xzawed\Keycloak\Tests\Unit\Admin;
 
 use PHPUnit\Framework\TestCase;
 use Fschmtt\Keycloak\Exception\BuilderException;
+use Fschmtt\Keycloak\Exception\SerializerException;
 use GuzzleHttp\Exception\{ClientException, ConnectException, RequestException, ServerException};
 use GuzzleHttp\Psr7\{Request, Response};
 use Xzawed\Keycloak\Admin\ErrorTranslation;
@@ -52,6 +53,13 @@ final class ErrorTranslationTest extends TestCase
     {
         $this->expectException(KeycloakTransportError::class);
         ErrorTranslation::call(fn () => throw new RequestException('cURL error 60: SSL certificate problem', new Request('GET', 'https://kc/')));
+    }
+    public function testSerializerExceptionMappedToAdminError(): void
+    {
+        // fschmtt는 역직렬화 실패 시 Guzzle 예외가 아닌 자체 SerializerException을 던진다 —
+        // ErrorTranslation의 \Throwable 총망라 net이 이를 KeycloakAdminError로 잡아야 한다(경계 누출 차단).
+        $this->expectException(KeycloakAdminError::class);
+        ErrorTranslation::call(fn () => throw new SerializerException('bad json'));
     }
     public function testPassesThroughReturn(): void
     {

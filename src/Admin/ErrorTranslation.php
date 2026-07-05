@@ -12,6 +12,7 @@ use GuzzleHttp\Exception\ServerException;
 use Xzawed\Keycloak\Exception\KeycloakAdminError;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
 use Xzawed\Keycloak\Exception\KeycloakConflictError;
+use Xzawed\Keycloak\Exception\KeycloakException;
 use Xzawed\Keycloak\Exception\KeycloakForbiddenError;
 use Xzawed\Keycloak\Exception\KeycloakNotFoundError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
@@ -46,6 +47,12 @@ final class ErrorTranslation
             throw new KeycloakTransportError('admin request failed', previous: $e);
         } catch (BuilderException $e) {
             throw new KeycloakConfigError($e->getMessage(), previous: $e);
+        } catch (KeycloakException $e) {
+            throw $e;   // 우리 자신의 SDK 예외 — 재래핑하지 않는다.
+        } catch (\Throwable $e) {
+            // fschmtt SerializerException(역직렬화 실패) 및 그 밖의 미분류 하위 라이브러리 예외를
+            // 전부 여기로 수렴시켜 admin 파사드 밖으로 새지 않게 한다(JwtValidator의 \Throwable net과 동형).
+            throw new KeycloakAdminError($e->getMessage(), null, $e);
         }
     }
 }
