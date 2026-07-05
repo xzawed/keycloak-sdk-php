@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Tests\Unit;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
+use Psr\Http\Client\NetworkExceptionInterface;
 use Psr\Http\Message\{RequestInterface, ResponseInterface, StreamInterface};
 use GuzzleHttp\Psr7\{HttpFactory, Response};
 use Xzawed\Keycloak\{KeycloakConfig, OidcEndpoints, ClientCredentialsTokenProvider};
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
+use Xzawed\Keycloak\Exception\KeycloakTransportError;
 
 final class ClientCredentialsTokenProviderTest extends TestCase
 {
@@ -55,6 +58,43 @@ final class ClientCredentialsTokenProviderTest extends TestCase
         $f = new HttpFactory();
         $p = new ClientCredentialsTokenProvider($this->config(), new OidcEndpoints($this->config()), $http, $f, $f);
         $this->expectException(KeycloakAuthError::class);
+        $p->getToken();
+    }
+
+    public function testClientExceptionMappedToTransport(): void
+    {
+        $http = new class () implements ClientInterface {
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                throw new class ('connection failed') extends \RuntimeException implements ClientExceptionInterface {};
+            }
+        };
+        $f = new HttpFactory();
+        $p = new ClientCredentialsTokenProvider($this->config(), new OidcEndpoints($this->config()), $http, $f, $f);
+        $this->expectException(KeycloakTransportError::class);
+        $p->getToken();
+    }
+
+    public function testNetworkExceptionMappedToTransport(): void
+    {
+        $http = new class () implements ClientInterface {
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                throw new class ('unreachable', $request) extends \RuntimeException implements NetworkExceptionInterface {
+                    public function __construct(string $message, private readonly RequestInterface $request)
+                    {
+                        parent::__construct($message);
+                    }
+                    public function getRequest(): RequestInterface
+                    {
+                        return $this->request;
+                    }
+                };
+            }
+        };
+        $f = new HttpFactory();
+        $p = new ClientCredentialsTokenProvider($this->config(), new OidcEndpoints($this->config()), $http, $f, $f);
+        $this->expectException(KeycloakTransportError::class);
         $p->getToken();
     }
 }
