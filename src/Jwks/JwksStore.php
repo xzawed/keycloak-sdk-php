@@ -47,8 +47,11 @@ final class JwksStore
         if ($this->lastRefetchAt !== null && ($now - $this->lastRefetchAt) < $this->minRefetchIntervalSeconds) {
             throw new TokenValidationError(sprintf('unknown kid "%s" (refetch rate-limited)', $kid));
         }
-        $this->fetch();
+        // 재조회 *결정 시점*에 stamp — fetch가 실패(IdP 장애)해도 게이트가 소모되도록 한다.
+        // stamp-after-fetch면 실패한 fetch가 lastRefetchAt을 갱신하지 못해, 위조 kid 스팸이
+        // IdP를 무제한 때린다(미인증 DoS 증폭). Rust/Go/Python/Ruby 동형.
         $this->lastRefetchAt = $now;
+        $this->fetch();
         if (isset($this->keys[$kid])) {
             return $this->keys[$kid];
         }

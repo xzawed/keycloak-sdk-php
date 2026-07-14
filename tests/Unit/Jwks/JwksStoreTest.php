@@ -143,4 +143,39 @@ final class JwksStoreTest extends TestCase
         self::assertSame('k1', $store->getKeyByKid('k1')['kid']);
         self::assertSame(1, $calls);
     }
+
+    public function testFetchFailureStillStampsRateLimitGate(): void
+    {
+        // 실패한 fetch(IdP 장애)도 rate-limit 게이트를 소모해야 한다. stamp-after-fetch면 fetch가
+        // 예외로 죽어 lastRefetchAt이 갱신되지 않아, 위조 kid 스팸이 IdP를 무제한 때린다(미인증 DoS 증폭).
+        // Rust/Go/Python/Ruby 동형: 재조회 *결정 시점*에 stamp한다.
+        $calls = 0;
+        $f = new HttpFactory();
+        // 첫 fetch만 성공(k1), 이후는 전부 실패(장애창).
+        $http = new class ($calls) implements ClientInterface {
+            public function __construct(public int &$calls) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->calls++;
+                if ($this->calls === 1) {
+                    return new Response(200, [], json_encode(['keys' => [['kid' => 'k1', 'kty' => 'RSA']]], JSON_THROW_ON_ERROR));
+                }
+                throw new class ('IdP down') extends \RuntimeException implements ClientExceptionInterface {};
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, $f, minRefetchIntervalSeconds: 60);
+        $store->getKeyByKid('k1'); // fetch #1 (성공)
+        // forged-1: 미해결 kid → 재조회 #2가 IdP 장애로 실패(transport error).
+        try {
+            $store->getKeyByKid('forged-1');
+        } catch (\Throwable) {
+        }
+        // forged-2: 창 내 → rate-limited여야 한다(재조회 #3 없음). stamp-after-fetch면 재조회한다.
+        try {
+            $store->getKeyByKid('forged-2');
+        } catch (\Throwable) {
+        }
+        self::assertSame(2, $calls, '실패한 fetch도 게이트를 소모 — forged-2는 재조회 없이 rate-limited');
+    }
 }
