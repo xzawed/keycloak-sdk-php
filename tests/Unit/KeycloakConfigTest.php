@@ -38,6 +38,21 @@ final class KeycloakConfigTest extends TestCase
         $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', scopes: [0 => 'openid', 2 => 'email']);
         self::assertSame(['openid', 'email'], $c->scopes);   // array_values reindexes to a list
     }
+    public function testSignatureAlgorithmsDefault(): void
+    {
+        $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c');
+        self::assertSame(['RS256'], $c->signatureAlgorithms);
+    }
+    public function testSignatureAlgorithmsCustom(): void
+    {
+        $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', signatureAlgorithms: ['ES256', 'RS256']);
+        self::assertSame(['ES256', 'RS256'], $c->signatureAlgorithms);
+    }
+    public function testEmptySignatureAlgorithmsThrows(): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', signatureAlgorithms: []);
+    }
     public function testToStringMasksSecret(): void
     {
         $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', clientSecret: 'super-secret');

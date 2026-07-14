@@ -16,8 +16,12 @@ final readonly class KeycloakConfig
     /** @var list<string> */
     public array $scopes;
 
+    /** @var list<string> JWT 서명 검증 허용 알고리즘 핀(기본 RS256, ES256/PS256 realm용 설정 가능). */
+    public array $signatureAlgorithms;
+
     /**
      * @param array<int, string> $scopes
+     * @param array<int, string> $signatureAlgorithms
      */
     public function __construct(
         string $serverUrl,
@@ -29,6 +33,7 @@ final readonly class KeycloakConfig
         public float $readTimeout = 10.0,
         public int $clockSkew = 30,
         public ?string $redirectUri = null,
+        array $signatureAlgorithms = ['RS256'],
     ) {
         if (trim($serverUrl) === '') {
             throw new KeycloakConfigError('serverUrl is required');
@@ -39,9 +44,14 @@ final readonly class KeycloakConfig
         if (trim($this->clientId) === '') {
             throw new KeycloakConfigError('clientId is required');
         }
+        if ($signatureAlgorithms === []) {
+            // 빈 집합은 alg 핀을 무력화한다(핀 없이는 alg 혼동에 노출) — 거부한다.
+            throw new KeycloakConfigError('signatureAlgorithms must be non-empty');
+        }
         // 후행 슬래시 제거(엔드포인트 조립 규약)
         $this->serverUrl = rtrim($serverUrl, '/');
         $this->scopes = array_values($scopes);
+        $this->signatureAlgorithms = array_values($signatureAlgorithms);
     }
 
     public function __toString(): string

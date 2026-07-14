@@ -17,8 +17,6 @@ use Xzawed\Keycloak\Token\ValidatedToken;
  */
 final class JwtValidator
 {
-    private const PINNED_ALG = 'RS256';
-
     public function __construct(
         private readonly KeycloakConfig $config,
         private readonly OidcEndpoints $endpoints,
@@ -32,7 +30,7 @@ final class JwtValidator
         // 디코드가 *성공한 후에만* 채워지므로 사전 게이트로 쓸 수 없다(순서 함정).
         $header = $this->decodeHeader($jwt);
         $alg = isset($header['alg']) && is_string($header['alg']) ? $header['alg'] : null;
-        if ($alg !== self::PINNED_ALG) {
+        if ($alg === null || !in_array($alg, $this->config->signatureAlgorithms, true)) {
             throw new TokenValidationError(sprintf('algorithm not allowed: %s', $alg ?? '(none)'));
         }
         $kid = isset($header['kid']) && is_string($header['kid']) ? $header['kid'] : null;
@@ -46,7 +44,7 @@ final class JwtValidator
         FbJwt::$leeway = $this->config->clockSkew;
         try {
             try {
-                $key = JWK::parseKey($jwk, self::PINNED_ALG);
+                $key = JWK::parseKey($jwk, $alg);
                 if ($key === null) {
                     throw new TokenValidationError('unusable JWKS key');
                 }
