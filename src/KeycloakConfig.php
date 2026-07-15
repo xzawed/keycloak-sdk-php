@@ -34,6 +34,8 @@ final readonly class KeycloakConfig
         public int $clockSkew = 30,
         public ?string $redirectUri = null,
         array $signatureAlgorithms = ['RS256'],
+        /** 미해결 kid로 인한 JWKS 재조회의 최소 간격(초, 기본 60) — DoS 증폭 상한. */
+        public int $jwksMinRefetchSeconds = 60,
     ) {
         if (trim($serverUrl) === '') {
             throw new KeycloakConfigError('serverUrl is required');
@@ -47,6 +49,9 @@ final readonly class KeycloakConfig
         if ($signatureAlgorithms === []) {
             // 빈 집합은 alg 핀을 무력화한다(핀 없이는 alg 혼동에 노출) — 거부한다.
             throw new KeycloakConfigError('signatureAlgorithms must be non-empty');
+        }
+        if ($this->jwksMinRefetchSeconds < 0) {
+            throw new KeycloakConfigError('jwksMinRefetchSeconds must be >= 0');
         }
         // 후행 슬래시 제거(엔드포인트 조립 규약)
         $this->serverUrl = rtrim($serverUrl, '/');

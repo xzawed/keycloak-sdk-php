@@ -33,7 +33,7 @@ final class KeycloakClient
             'http_errors' => true,
         ]);
         $factory = new HttpFactory();
-        $jwks = new JwksStore($endpoints->jwks(), $guzzle, $factory);
+        $jwks = new JwksStore($endpoints->jwks(), $guzzle, $factory, $config->jwksMinRefetchSeconds);
         $validator = new JwtValidator($config, $endpoints, $jwks);
         $auth = new AuthClient($config, $endpoints, $validator, $guzzle);
 
