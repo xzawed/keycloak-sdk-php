@@ -65,7 +65,11 @@ final class AuthClient
 
     public function clientCredentialsToken(): TokenSet
     {
-        return $this->toTokenSet($this->getAccessToken('client_credentials'));
+        // config.scopes를 client-credentials 요청에 전달한다(authz-url과 동형). 누락 시 커스텀 스코프가
+        // 무시돼 언더스코프 토큰이 발급된다(다른 SDK는 모두 threading — Node/Rust token-provider 동형).
+        $options = $this->config->scopes === [] ? [] : ['scope' => implode(' ', $this->config->scopes)];
+
+        return $this->toTokenSet($this->getAccessToken('client_credentials', $options));
     }
 
     public function refresh(string $refreshToken): TokenSet
