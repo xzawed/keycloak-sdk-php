@@ -1,8 +1,17 @@
 {
   "name": "xzawed/keycloak-sdk",
-  "description": "Keycloak SDK for PHP — OIDC auth + Admin REST, isomorphic with the Java/Python/Node/Go/C# SDKs",
+  "description": "Keycloak SDK for PHP — OIDC/OAuth2 authentication + Admin REST API, part of a nine-language polyglot SDK",
+  "keywords": ["keycloak", "oidc", "oauth2", "openid-connect", "jwt", "authentication", "admin-api", "sdk"],
+  "homepage": "https://github.com/xzawed/KeyCloakSDK/tree/main/php#readme",
   "license": "Apache-2.0",
   "type": "library",
+  "authors": [
+    { "name": "xzawed", "email": "xzawed31@gmail.com" }
+  ],
+  "support": {
+    "issues": "https://github.com/xzawed/KeyCloakSDK/issues",
+    "source": "https://github.com/xzawed/KeyCloakSDK/tree/main/php"
+  },
   "require": {
     "php": "^8.3",
     "firebase/php-jwt": "^7.1",
