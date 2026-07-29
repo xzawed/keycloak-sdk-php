@@ -46,9 +46,14 @@ final class JwtValidatorTest extends TestCase
         $this->key = ['priv' => $priv, 'jwk' => $jwk];
     }
 
-    private function validator(): JwtValidator
+    private function validator(?string $expectedAudience = null): JwtValidator
     {
-        $cfg = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'it-realm', clientId: 'it-client');
+        $cfg = new KeycloakConfig(
+            serverUrl: 'http://kc:8080',
+            realm: 'it-realm',
+            clientId: 'it-client',
+            expectedAudience: $expectedAudience,
+        );
         $f = new HttpFactory();
         $jwk = $this->key['jwk'];
         $http = new class ($jwk) implements ClientInterface {
@@ -108,6 +113,30 @@ final class JwtValidatorTest extends TestCase
         $c['aud'] = ['other-client'];
         $this->expectException(TokenValidationError::class);
         $this->validator()->validate($this->sign($c));
+    }
+
+    public function testExpectedAudienceUnsetFallsBackToClientId(): void
+    {
+        // 미설정이면 종전 동작 그대로 — clientId를 담은 aud는 통과, 담지 않은 aud는 거부.
+        $vt = $this->validator()->validate($this->sign($this->goodClaims()));
+        self::assertContains('it-client', $vt->audience);
+
+        $c = $this->goodClaims();
+        $c['aud'] = ['my-api'];
+        $this->expectException(TokenValidationError::class);
+        $this->validator()->validate($this->sign($c));
+    }
+
+    public function testExpectedAudienceReplacesClientId(): void
+    {
+        // 설정하면 기대 aud가 그 값으로 바뀐다 — clientId만 담은 토큰은 더 이상 통과하지 않는다.
+        $c = $this->goodClaims();
+        $c['aud'] = ['my-api', 'account'];
+        $vt = $this->validator('my-api')->validate($this->sign($c));
+        self::assertContains('my-api', $vt->audience);
+
+        $this->expectException(TokenValidationError::class);
+        $this->validator('my-api')->validate($this->sign($this->goodClaims()));
     }
 
     public function testRejectsExpired(): void

@@ -73,8 +73,10 @@ final class JwtValidator
             throw new TokenValidationError(sprintf('issuer mismatch: %s', $iss));
         }
         $aud = $this->normalizeAudience($claims['aud'] ?? null);
-        if (!in_array($this->config->clientId, $aud, true)) {
-            throw new TokenValidationError('audience does not contain clientId');
+        // 기대 aud는 expectedAudience(설정 시) — 미설정이면 종전대로 clientId.
+        $expectedAud = $this->config->expectedAudience ?? $this->config->clientId;
+        if (!in_array($expectedAud, $aud, true)) {
+            throw new TokenValidationError(sprintf('audience does not contain %s', $expectedAud));
         }
 
         // (4) 매핑 — 'exp'는 위에서 존재를 이미 강제했으므로(재차 isset하면 PHPStan이 "always exists"로

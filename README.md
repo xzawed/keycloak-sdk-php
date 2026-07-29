@@ -59,6 +59,8 @@ $userId = $client->admin()->users()->findIdByUsername('alice');
 echo "created userId={$userId}\n";
 ```
 
+> **Audience:** validation requires the token's `aud` to contain `clientId`. A stock realm does *not* put the client id in a client-credentials token's `aud`, so on a default realm either pass `expectedAudience: 'my-api'` (the audience your realm actually issues), or add an *Audience* protocol mapper to the client in Keycloak.
+
 Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `KeycloakForbiddenError` (all carrying `KeycloakAdminError::getStatusCode()`), network failures as `KeycloakTransportError`. `admin()->raw()` is the escape hatch to the underlying typed client.
 
 ## Secure by default
