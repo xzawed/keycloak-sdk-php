@@ -35,7 +35,7 @@ final readonly class KeycloakConfig
         public ?string $redirectUri = null,
         array $signatureAlgorithms = ['RS256'],
         /** 미해결 kid로 인한 JWKS 재조회의 최소 간격(초, 기본 60) — DoS 증폭 상한. */
-        public int $jwksMinRefetchSeconds = 60,
+        public int $jwksMinRefetchSeconds = 30,
         /**
          * 토큰 aud에 들어있어야 할 값(기본 null = clientId). 기본 realm은 client-credentials 토큰의
          * aud에 clientId를 넣지 않으므로, realm이 실제로 발급하는 리소스/오디언스를 지정하거나

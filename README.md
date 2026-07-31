@@ -67,7 +67,7 @@ Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `K
 
 - **Algorithm pinning** — the accepted JWT signature algorithms are pinned (`RS256` by default, configurable via `signatureAlgorithms:`); the header-supplied `alg`, including `none`, is never trusted.
 - **Hardened claims** — exact `iss` match, `aud` containment check, mandatory `exp` (a token without one is rejected), and a bounded clock skew (`clockSkew:`, default 30s).
-- **DoS-safe JWKS** — a refetch happens only for an unresolved key ID (rotation), rate-limited by `jwksMinRefetchSeconds:` (default 60s), so forged random `kid`s cannot flood the IdP.
+- **DoS-safe JWKS** — a refetch happens only for an unresolved key ID (rotation), rate-limited by `jwksMinRefetchSeconds:` (default 30s), so forged random `kid`s cannot flood the IdP.
 - **Secrets stay out of logs** — `KeycloakConfig` and `TokenSet` mask secrets and tokens fully (`***`, no prefix) in their `__toString()`; TLS verification is on by default and both connect and read timeouts are always applied.
 
 ## Documentation
