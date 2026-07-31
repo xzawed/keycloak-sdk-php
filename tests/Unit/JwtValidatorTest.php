@@ -161,6 +161,48 @@ final class JwtValidatorTest extends TestCase
         $this->validator()->validate($this->sign($this->goodClaims(), kid: 'other-kid'));
     }
 
+    // ── 릴리스 전 감사 후속: 구현만 있고 테스트가 없던 2건 ──
+
+    /**
+     * 클록 스큐 경계 — 스큐(기본 30초) 안에서 만료된 토큰은 통과하고, 밖에서 만료된 토큰은 거부된다.
+     * 두 단언이 쌍이어야 의미가 있다: 통과 케이스만으로는 스큐가 무한대여도, 거부 케이스만으로는
+     * 스큐가 0이어도 통과한다. 쌍이어야 `FbJwt::$leeway = config->clockSkew` 배선이 증명된다.
+     * (⚠️ firebase/php-jwt의 `$leeway`는 프로세스 전역 static이라 JwtValidator가 매 검증마다
+     * 재설정한다 — 다른 테스트가 남긴 값에 의존하지 않도록 두 케이스를 같은 테스트에 둔다.)
+     */
+    public function testClockSkewBoundaryWithinPassesBeyondRejected(): void
+    {
+        $within = $this->goodClaims();
+        $within['exp'] = time() - 10;   // 스큐 30초 안
+        self::assertSame('s1', $this->validator()->validate($this->sign($within))->subject);
+
+        $beyond = $this->goodClaims();
+        $beyond['exp'] = time() - 60;   // 스큐 30초 밖
+        $this->expectException(TokenValidationError::class);
+        $this->validator()->validate($this->sign($beyond));
+    }
+
+    /**
+     * HS256/RS256 혼동 공격 — 공격자가 공개된 RSA 공개키를 HMAC 비밀로 삼아 HS256 토큰을 위조한다.
+     * 검증기가 헤더의 alg를 믿고 키를 고르면 "공개키를 아는 사람 = 토큰을 발급할 수 있는 사람"이 된다.
+     * 우리 검증기는 JWKS의 RS256 키로만 검증하므로 거부해야 한다.
+     */
+    public function testRejectsHs256ForgedWithRsaPublicKey(): void
+    {
+        $privateKey = openssl_pkey_get_private($this->key['priv']);
+        self::assertNotFalse($privateKey);
+        $details = openssl_pkey_get_details($privateKey);
+        self::assertIsArray($details);
+        $publicPem = $details['key'];
+        self::assertIsString($publicPem);
+
+        // 공개키 텍스트를 HMAC 비밀로 사용해 위조(고전 공격 벡터).
+        $forged = FbJwt::encode($this->goodClaims(), $publicPem, 'HS256', 'test-kid');
+
+        $this->expectException(TokenValidationError::class);
+        $this->validator()->validate($forged);
+    }
+
     public function testRejectsTamperedSignature(): void
     {
         // 다른 키쌍으로 서명하되 kid는 진짜 kid를 사칭 — JWKS는 진짜 공개키를 돌려주므로
