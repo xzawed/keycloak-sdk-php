@@ -7,6 +7,7 @@ namespace Xzawed\Keycloak;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Psr7\HttpFactory;
 use Xzawed\Keycloak\Admin\AdminClient;
+use Xzawed\Keycloak\Http\HttpOptions;
 use Xzawed\Keycloak\Jwks\JwksStore;
 
 /**
@@ -26,12 +27,7 @@ final class KeycloakClient
     public static function create(KeycloakConfig $config): self
     {
         $endpoints = new OidcEndpoints($config);
-        $guzzle = new GuzzleClient([
-            'connect_timeout' => $config->connectTimeout,
-            'timeout' => $config->readTimeout,
-            'verify' => true,
-            'http_errors' => true,
-        ]);
+        $guzzle = new GuzzleClient(HttpOptions::guzzle($config));
         $factory = new HttpFactory();
         $jwks = new JwksStore($endpoints->jwks(), $guzzle, $factory, $config->jwksMinRefetchSeconds);
         $validator = new JwtValidator($config, $endpoints, $jwks);

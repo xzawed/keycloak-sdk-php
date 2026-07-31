@@ -8,6 +8,7 @@ use Fschmtt\Keycloak\Builder;
 use Fschmtt\Keycloak\Keycloak;
 use Fschmtt\Keycloak\OAuth\GrantType;
 use GuzzleHttp\Client as GuzzleClient;
+use Xzawed\Keycloak\Http\HttpOptions;
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
 
@@ -26,12 +27,7 @@ final class AdminClient
             throw new KeycloakConfigError('admin requires clientSecret (client-credentials)');
         }
         $this->realm = $config->realm;
-        $guzzle = new GuzzleClient([
-            'connect_timeout' => $config->connectTimeout,
-            'timeout' => $config->readTimeout,
-            'verify' => true,
-            'http_errors' => true,
-        ]);
+        $guzzle = new GuzzleClient(HttpOptions::guzzle($config));
         $this->kc = ErrorTranslation::call(fn (): Keycloak => (new Builder())
             ->withBaseUrl($config->serverUrl)
             ->withGrantType(GrantType::clientCredentials(
