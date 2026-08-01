@@ -63,12 +63,18 @@ echo "created userId={$userId}\n";
 
 Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `KeycloakForbiddenError` (all carrying `KeycloakAdminError::getStatusCode()`), network failures as `KeycloakTransportError`. `admin()->raw()` is the escape hatch to the underlying typed client.
 
-## Secure by default
+## Security defaults
 
-- **Algorithm pinning** — the accepted JWT signature algorithms are pinned (`RS256` by default, configurable via `signatureAlgorithms:`); the header-supplied `alg`, including `none`, is never trusted.
+- **Algorithm pinning** — the accepted JWT signature algorithms are pinned (`RS256` by default, configurable via `signatureAlgorithms:`); the header-supplied `alg`, including `none`, is never trusted. The SDK decodes the raw header segment itself to gate on `alg` *before* verification, because `firebase/php-jwt` only fills its `&$headers` out-parameter after a successful decode.
 - **Hardened claims** — exact `iss` match, `aud` containment check, mandatory `exp` (a token without one is rejected), and a bounded clock skew (`clockSkew:`, default 30s).
-- **DoS-safe JWKS** — a refetch happens only for an unresolved key ID (rotation), rate-limited by `jwksMinRefetchSeconds:` (default 30s), so forged random `kid`s cannot flood the IdP.
-- **Secrets stay out of logs** — `KeycloakConfig` and `TokenSet` mask secrets and tokens fully (`***`, no prefix) in their `__toString()`; TLS verification is on by default and both connect and read timeouts are always applied.
+- **DoS-safe JWKS** — a refetch is triggered only by an unresolved key ID (rotation) and never by a bad signature, and is rate-limited by `jwksMinRefetchSeconds:` (default 30s) — so no volume of forged random `kid`s makes the SDK issue more than one JWKS request per interval.
+- **Secret handling** — `KeycloakConfig` and `TokenSet` mask secrets and tokens fully (`***`, no prefix) in their `__toString()`; TLS verification is on by default and both connect and read timeouts are always applied.
+
+Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksStore` in-memory state, so their reach follows your deployment model: under a long-running worker (Swoole, RoadRunner) they span requests, but under classic PHP-FPM every request builds a fresh store and the limit only binds within that one request. And masking covers this SDK's own `__toString()` — PHP has no erasable string type, so the client secret lives in an ordinary `string` for its lifetime and masking is defence in depth, not a guarantee about your logs.
+
+## Versioning and support
+
+This SDK is **pre-1.0**. Under SemVer a `0.x` **minor** bump may carry breaking changes, so read the release notes before upgrading. Only the newest released version of each language SDK receives security fixes — there are no LTS lines, and older `0.x` releases are not backported to. Full policy: [SECURITY.md](https://github.com/xzawed/KeyCloakSDK/blob/main/SECURITY.md).
 
 ## Documentation
 
