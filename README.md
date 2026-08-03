@@ -4,7 +4,7 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **Pre-release** — not yet published to Packagist.
+> **Pre-release** — the first release candidate (`v0.1.0-rc.1`) is on Packagist (`composer require "xzawed/keycloak-sdk:0.1.0-rc.1"`); there is no stable release yet.
 
 ## Requirements
 
