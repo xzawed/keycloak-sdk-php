@@ -9,6 +9,7 @@ use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\{RequestInterface, ResponseInterface};
 use GuzzleHttp\Psr7\{HttpFactory, Response};
+use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\TokenValidationError;
@@ -28,6 +29,21 @@ final class JwksStoreTest extends TestCase
                 return new Response(200, [], json_encode(['keys' => $this->keys], JSON_THROW_ON_ERROR));
             }
         };
+    }
+
+    /**
+     * ⚠️ **2차 정의 자리 금지**(Task D1). `JwksStore`는 `final class`에 public 생성자라 소비자가
+     * 파사드를 거치지 않고 직접 생성할 수 있다. 예전에는 그 경로의 기본값이 60이라 config·문서가
+     * 말하는 30과 어긋났다. 이 테스트는 "생략했을 때의 값"을 config 상수에 고정한다 — 리터럴을
+     * 다시 적으면 실패한다.
+     */
+    public function testOmittedMinRefetchUsesConfigDefault(): void
+    {
+        $f = new HttpFactory();
+        $calls = 0;
+        $store = new JwksStore('http://kc/certs', $this->http([['kid' => 'k1', 'kty' => 'RSA']], $calls), $f);
+        $ref = new \ReflectionProperty($store, 'minRefetchIntervalSeconds');
+        self::assertSame(KeycloakConfig::DEFAULT_JWKS_MIN_REFETCH_SECONDS, $ref->getValue($store));
     }
 
     public function testCacheHitNoNetworkAfterFirst(): void

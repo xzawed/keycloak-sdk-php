@@ -8,6 +8,7 @@ use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 
 /**
@@ -25,7 +26,10 @@ final class JwksStore
         private readonly string $jwksUri,
         private readonly ClientInterface $http,
         private readonly RequestFactoryInterface $requestFactory,
-        private readonly int $minRefetchIntervalSeconds = 60,
+        // ⚠️ 기본값을 여기 숫자로 적지 말 것 — `KeycloakConfig`가 유일한 정의 자리다. 이 클래스는
+        // `final class` + public 생성자라 소비자가 파사드를 거치지 않고 직접 생성할 수 있고,
+        // 예전에는 그 경로가 문서의 30이 아니라 60을 받았다(2026-08-13 Task D1).
+        private readonly int $minRefetchIntervalSeconds = KeycloakConfig::DEFAULT_JWKS_MIN_REFETCH_SECONDS,
     ) {}
 
     /**

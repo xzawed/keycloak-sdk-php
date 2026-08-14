@@ -11,6 +11,17 @@ use Xzawed\Keycloak\Exception\KeycloakConfigError;
  */
 final readonly class KeycloakConfig
 {
+    /**
+     * JWKS 최소 재조회 간격 기본값의 **유일한 정의 자리**(초). DoS 증폭 상한이고 아홉 언어가
+     * 같은 값으로 정렬돼 있다 — `scripts/test/test-security-defaults.sh`가 아홉 언어 코드와
+     * 소비자 문서를 함께 대조한다.
+     *
+     * ⚠️ 이 숫자를 다른 곳에 다시 적지 말 것. 예전에는 여기 30, `Jwks\JwksStore` 생성자에 60으로
+     * **두 번** 적혀 있었고, `JwksStore`는 `final class`에 public 생성자라 소비자가 직접 생성하면
+     * (파사드를 거치지 않으면) 문서가 말하는 30이 아니라 60을 받았다.
+     */
+    public const DEFAULT_JWKS_MIN_REFETCH_SECONDS = 30;
+
     public string $serverUrl;
 
     /** @var list<string> */
@@ -34,8 +45,8 @@ final readonly class KeycloakConfig
         public int $clockSkew = 30,
         public ?string $redirectUri = null,
         array $signatureAlgorithms = ['RS256'],
-        /** 미해결 kid로 인한 JWKS 재조회의 최소 간격(초, 기본 60) — DoS 증폭 상한. */
-        public int $jwksMinRefetchSeconds = 30,
+        /** 미해결 kid로 인한 JWKS 재조회의 최소 간격(초) — DoS 증폭 상한. 기본값은 위 상수. */
+        public int $jwksMinRefetchSeconds = self::DEFAULT_JWKS_MIN_REFETCH_SECONDS,
         /**
          * 토큰 aud에 들어있어야 할 값(기본 null = clientId). 기본 realm은 client-credentials 토큰의
          * aud에 clientId를 넣지 않으므로, realm이 실제로 발급하는 리소스/오디언스를 지정하거나
