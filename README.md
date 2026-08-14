@@ -16,7 +16,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 The SDK is developed in the `php/` directory of a polyglot monorepo, and Packagist cannot install from a subdirectory. Releases are therefore subtree-split into the dedicated read-only repository [`xzawed/keycloak-sdk-php`](https://github.com/xzawed/keycloak-sdk-php), which is what Packagist reads — the package name stays `xzawed/keycloak-sdk`:
 
 ```bash
-composer require xzawed/keycloak-sdk
+composer require "xzawed/keycloak-sdk:0.1.0-rc.1"
 ```
 
 ```php
