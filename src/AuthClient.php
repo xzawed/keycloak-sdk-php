@@ -12,6 +12,7 @@ use League\OAuth2\Client\Token\AccessToken;
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakException;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\Exception\TokenValidationError;
 use Xzawed\Keycloak\Internal\PkceKeycloakProvider;
 use Xzawed\Keycloak\Token\AuthorizationRequest;
 use Xzawed\Keycloak\Token\IntrospectionResult;
@@ -46,21 +47,68 @@ final class AuthClient
 
     public function createAuthorizationRequest(): AuthorizationRequest
     {
-        $url = $this->provider->getAuthorizationUrl(['scope' => implode(' ', $this->config->scopes)]);
+        // league/oauth2-client getAuthorizationUrl(['nonce' => $n])는 쿼리에 nonce=를 그대로 싣는다
+        // (실측 2026-08-15: HAS_NONCE_KEY=yes MATCHES=yes). pkceMethod 생성자 옵션의 no-op과 다른 부류.
+        $nonce = self::randomUrlSafe();
+        $url = $this->provider->getAuthorizationUrl([
+            'scope' => implode(' ', $this->config->scopes),
+            'nonce' => $nonce,
+        ]);
         $verifier = $this->provider->getPkceCode();
 
-        return new AuthorizationRequest(url: $url, state: $this->provider->getState(), codeVerifier: (string) $verifier);
+        return new AuthorizationRequest(
+            url: $url,
+            state: $this->provider->getState(),
+            codeVerifier: (string) $verifier,
+            nonce: $nonce,
+        );
     }
 
     /**
      * Authorization-code + PKCE 토큰 교환. 콜백에서 OAuth `state`를 createAuthorizationRequest()가 발급한
      * 값과 대조하는 것은 호출자 책임이다(SDK는 무상태라 state를 검증하지 않는다 — Node/Go/C# SDK와 동형).
+     *
+     * `$expectedNonce`가 주어지면(createAuthorizationRequest()가 돌려준 nonce) 응답 id_token을
+     * JwtValidator로 서명·iss·aud·exp까지 검증한 뒤 nonce 클레임을 대조한다 — OIDC nonce 재생
+     * 방지. 불일치·부재·검증실패는 모두 거부(fail-closed). null이면 id_token 검증을 건너뛴다
+     * (여덟 언어 공통 패턴 — 필수로 만들지 않는다).
      */
-    public function exchangeCode(string $code, string $codeVerifier): TokenSet
+    public function exchangeCode(string $code, string $codeVerifier, ?string $expectedNonce = null): TokenSet
     {
         $this->provider->setPkceCode($codeVerifier);
+        $tokens = $this->toTokenSet($this->getAccessToken('authorization_code', ['code' => $code]));
+        if ($expectedNonce !== null) {
+            $this->requireValidNonce($tokens->idToken, $expectedNonce);
+        }
 
-        return $this->toTokenSet($this->getAccessToken('authorization_code', ['code' => $code]));
+        return $tokens;
+    }
+
+    /**
+     * id_token의 nonce 클레임을 대조하기 전에 강화 JwtValidator로 서명·iss·aud·exp까지 검증한다.
+     * 거부는 자매 언어와 같이 Auth 계급(KeycloakAuthError)이다 — TokenValidationError는
+     * validator가 던지고 여기서 감싼다(Ruby AuthError 동형).
+     */
+    private function requireValidNonce(?string $idToken, string $expectedNonce): void
+    {
+        if ($idToken === null || $idToken === '') {
+            throw new KeycloakAuthError('authorization code exchange failed: missing id_token for nonce validation');
+        }
+        try {
+            $validated = $this->validator->validate($idToken);
+        } catch (TokenValidationError $e) {
+            throw new KeycloakAuthError('authorization code exchange failed: invalid id_token: ' . $e->getMessage(), previous: $e);
+        }
+        $actual = $validated->claims['nonce'] ?? null;
+        if (!is_string($actual) || $actual !== $expectedNonce) {
+            throw new KeycloakAuthError('authorization code exchange failed: unexpected nonce');
+        }
+    }
+
+    /** state/PKCE와 같은 강도의 URL-safe 난수(base64url, 패딩 없음). */
+    private static function randomUrlSafe(): string
+    {
+        return rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '=');
     }
 
     public function clientCredentialsToken(): TokenSet
