@@ -24,6 +24,15 @@ final class UsersResource
         return ErrorTranslation::call(fn (): User => $this->kc->users()->get($this->realm, $userId));
     }
 
+    /**
+     * void — 자매 언어(Java/Kotlin/Python/Node/Go/Ruby/.NET)가 전부 값을 안 돌린다.
+     * fschmtt Users::update 도 void 라 버릴 것도 없다.
+     */
+    public function update(string $userId, User $user): void
+    {
+        ErrorTranslation::call(fn () => $this->kc->users()->update($this->realm, $userId, $user));
+    }
+
     public function search(?Criteria $criteria = null): UserCollection
     {
         return ErrorTranslation::call(fn (): UserCollection => $this->kc->users()->search($this->realm, $criteria));

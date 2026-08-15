@@ -31,4 +31,10 @@ final class GroupsResource
     {
         ErrorTranslation::call(fn () => $this->kc->groups()->delete($this->realm, $groupId));
     }
+
+    /** void — fschmtt Groups::update 도 void. 자매 언어와 동형. */
+    public function update(string $groupId, Group $group): void
+    {
+        ErrorTranslation::call(fn () => $this->kc->groups()->update($this->realm, $groupId, $group));
+    }
 }

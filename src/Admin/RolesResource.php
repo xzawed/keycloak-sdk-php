@@ -31,4 +31,13 @@ final class RolesResource
     {
         ErrorTranslation::call(fn () => $this->kc->roles()->delete($this->realm, $roleName));
     }
+
+    /**
+     * fschmtt Roles::update 는 역할 이름을 $role->getName() 에서 읽는다
+     * (별도 id 인자 없음). void — 자매 언어와 동형.
+     */
+    public function update(Role $role): void
+    {
+        ErrorTranslation::call(fn () => $this->kc->roles()->update($this->realm, $role));
+    }
 }

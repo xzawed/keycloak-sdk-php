@@ -53,9 +53,11 @@ echo "token type: {$token->tokenType}, expires in: {$token->expiresIn}s\n";
 $validated = $client->auth()->validate($token->accessToken);
 echo "subject: {$validated->subject}, issuer: {$validated->issuer}\n";
 
-// 3) admin API — create returns void, so look the id up afterwards with findIdByUsername().
-$client->admin()->users()->create(new User(username: 'alice', enabled: true));
-$userId = $client->admin()->users()->findIdByUsername('alice');
+// 3) admin API — create/update return void (sister-language isomorphism). Look the id up with findIdByUsername().
+$users = $client->admin()->users();
+$users->create(new User(username: 'alice', enabled: true));
+$userId = $users->findIdByUsername('alice');
+$users->update($userId, $users->get($userId)->withEmail('alice@example.com'));
 echo "created userId={$userId}\n";
 ```
 

@@ -65,6 +65,10 @@ final class FullFlowIT extends TestCase
         self::assertNotNull($userId);
         self::assertSame($username, $users->get($userId)->getUsername());
 
+        $updatedEmail = "upd-{$username}@example.com";
+        $users->update($userId, $users->get($userId)->withEmail($updatedEmail));
+        self::assertSame($updatedEmail, $users->get($userId)->getEmail());
+
         $users->delete($userId);
 
         // 5) delete 후 조회 → NotFound
@@ -92,6 +96,9 @@ final class FullFlowIT extends TestCase
 
         $fetched = $clients->get($clientUuid);
         self::assertSame($clientId, $fetched->getClientId());
+
+        $clients->update($clientUuid, $fetched->withDescription('updated-by-it'));
+        self::assertSame('updated-by-it', $clients->get($clientUuid)->getDescription());
 
         $clients->delete($clientUuid);
 
