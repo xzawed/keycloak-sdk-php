@@ -4,7 +4,7 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **Pre-release** — the newest release candidate (`v0.1.0-rc.2`) is on Packagist (`composer require "xzawed/keycloak-sdk:0.1.0-rc.2"`); there is no stable release yet.
+> **`v0.1.0` is on Packagist** — the first stable release. `composer require xzawed/keycloak-sdk` now resolves it under Composer's default `minimum-stability: stable`, which previously excluded the RCs entirely.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 The SDK is developed in the `php/` directory of a polyglot monorepo, and Packagist cannot install from a subdirectory. Releases are therefore subtree-split into the dedicated read-only repository [`xzawed/keycloak-sdk-php`](https://github.com/xzawed/keycloak-sdk-php), which is what Packagist reads — the package name stays `xzawed/keycloak-sdk`:
 
 ```bash
-composer require "xzawed/keycloak-sdk:0.1.0-rc.2"
+composer require "xzawed/keycloak-sdk:0.1.0"
 ```
 
 ```php
