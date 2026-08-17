@@ -4,7 +4,7 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **Pre-release** — the first release candidate (`v0.1.0-rc.1`) is on Packagist (`composer require "xzawed/keycloak-sdk:0.1.0-rc.1"`); there is no stable release yet.
+> **Pre-release** — the newest release candidate (`v0.1.0-rc.2`) is on Packagist (`composer require "xzawed/keycloak-sdk:0.1.0-rc.2"`); there is no stable release yet.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 The SDK is developed in the `php/` directory of a polyglot monorepo, and Packagist cannot install from a subdirectory. Releases are therefore subtree-split into the dedicated read-only repository [`xzawed/keycloak-sdk-php`](https://github.com/xzawed/keycloak-sdk-php), which is what Packagist reads — the package name stays `xzawed/keycloak-sdk`:
 
 ```bash
-composer require "xzawed/keycloak-sdk:0.1.0-rc.1"
+composer require "xzawed/keycloak-sdk:0.1.0-rc.2"
 ```
 
 ```php
@@ -77,7 +77,7 @@ Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksS
 
 ## Upgrading from `0.1.0-rc.1`
 
-The next release will be `0.1.0-rc.2`. It adds OIDC `nonce` so `id_token` replay can be detected, which changes two signatures. **One of them can break your code:**
+`0.1.0-rc.2` adds OIDC `nonce` so `id_token` replay can be detected, which changes two signatures. **One of them can break your code:**
 
 1. **`new AuthorizationRequest(...)` gains a required `string $nonce`.** If you construct this type by hand you will get a `TypeError` for the missing argument. Let the SDK build it instead — `$client->auth()->createAuthorizationRequest(...)` returns a fully populated instance. Reading fields off the returned object is unaffected (a field was *added*, none removed).
 2. **`exchangeCode()` gains an optional third argument.** Two-argument calls keep working unchanged — but that path still does **not** verify the `id_token`. To get replay protection, pass the nonce you were given: `exchangeCode($code, $verifier, $req->nonce)`.
