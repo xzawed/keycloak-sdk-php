@@ -75,6 +75,13 @@ Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `K
 
 Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksStore` in-memory state, so their reach follows your deployment model: under a long-running worker (Swoole, RoadRunner) they span requests, but under classic PHP-FPM every request builds a fresh store and the limit only binds within that one request. And masking covers this SDK's own `__toString()` — PHP has no erasable string type, so the client secret lives in an ordinary `string` for its lifetime and masking is defence in depth, not a guarantee about your logs.
 
+## Upgrading from `0.1.0-rc.1`
+
+The next release will be `0.1.0-rc.2`. It adds OIDC `nonce` so `id_token` replay can be detected, which changes two signatures. **One of them can break your code:**
+
+1. **`new AuthorizationRequest(...)` gains a required `string $nonce`.** If you construct this type by hand you will get a `TypeError` for the missing argument. Let the SDK build it instead — `$client->auth()->createAuthorizationRequest(...)` returns a fully populated instance. Reading fields off the returned object is unaffected (a field was *added*, none removed).
+2. **`exchangeCode()` gains an optional third argument.** Two-argument calls keep working unchanged — but that path still does **not** verify the `id_token`. To get replay protection, pass the nonce you were given: `exchangeCode($code, $verifier, $req->nonce)`.
+
 ## Versioning and support
 
 This SDK is **pre-1.0**. Under SemVer a `0.x` **minor** bump may carry breaking changes, so read the release notes before upgrading. Only the newest released version of each language SDK receives security fixes — there are no LTS lines, and older `0.x` releases are not backported to. Full policy: [SECURITY.md](https://github.com/xzawed/KeyCloakSDK/blob/main/SECURITY.md).
