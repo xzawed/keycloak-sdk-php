@@ -4,7 +4,9 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **`v0.1.0` is on Packagist** — the first stable release. `composer require xzawed/keycloak-sdk` now resolves it under Composer's default `minimum-stability: stable`, which previously excluded the RCs entirely.
+> **`v0.2.0` is on Packagist** — `composer require xzawed/keycloak-sdk` resolves it under Composer's default `minimum-stability: stable`.
+>
+> ⚠️ **`0.2.0` restores a capability that `0.1.0` did not have: renaming a realm role.** `roles()->update()` now takes the current name as its first argument — `update(string $name, Role $role)` — because the old one-argument form **could not express a rename at all**. See [Upgrading from `0.1.0`](https://github.com/xzawed/KeyCloakSDK/blob/main/php/README.md#upgrading-from-010).
 
 ## Requirements
 
@@ -16,7 +18,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 The SDK is developed in the `php/` directory of a polyglot monorepo, and Packagist cannot install from a subdirectory. Releases are therefore subtree-split into the dedicated read-only repository [`xzawed/keycloak-sdk-php`](https://github.com/xzawed/keycloak-sdk-php), which is what Packagist reads — the package name stays `xzawed/keycloak-sdk`:
 
 ```bash
-composer require "xzawed/keycloak-sdk:0.1.0"
+composer require "xzawed/keycloak-sdk:0.2.0"
 ```
 
 ```php
@@ -74,6 +76,25 @@ Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `K
 - **Secret handling** — `KeycloakConfig` and `TokenSet` mask secrets and tokens fully (`***`, no prefix) in their `__toString()`; TLS verification is on by default and both connect and read timeouts are always applied.
 
 Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksStore` in-memory state, so their reach follows your deployment model: under a long-running worker (Swoole, RoadRunner) they span requests, but under classic PHP-FPM every request builds a fresh store and the limit only binds within that one request. And masking covers this SDK's own `__toString()` — PHP has no erasable string type, so the client secret lives in an ordinary `string` for its lifetime and masking is defence in depth, not a guarantee about your logs.
+
+## Upgrading from `0.1.0`
+
+**One signature changed, and it is a fix rather than a rearrangement.**
+
+`roles()->update(Role $role)` became **`roles()->update(string $name, Role $role)`**. The old form took only the representation, and the library underneath builds the request path out of `$role->getName()` — so the path and the body came from the same value and **a rename could not be expressed**. Measured on `0.1.0`: asking to rename `old-name` to `new-name` sent `PUT /roles/new-name` with body `{"name":"new-name"}`, and the current name appeared nowhere in the request. Keycloak renames with `PUT /{current name}` carrying the new name in the body, so that request was not a rename — it was an update aimed at a role that does not exist yet.
+
+```php
+// 0.1.0 — could only ever update a role in place
+$admin->roles()->update(new Role(name: 'reporting'));
+
+// 0.2.0 — address by the current name, put the new one in the body
+$admin->roles()->update('reporting', new Role(name: 'analytics'));
+
+// updating without renaming: repeat the name
+$admin->roles()->update('reporting', new Role(name: 'reporting', description: 'Read-only'));
+```
+
+The other eight language SDKs always took `(name, representation)`; this brings PHP back in line with them. Nothing else changed — `users()`, `clients()`, `realms()` and `groups()` already took a separate identifier and are untouched.
 
 ## Upgrading from `0.1.0-rc.1`
 
