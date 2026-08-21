@@ -84,10 +84,10 @@ Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksS
 `roles()->update(Role $role)` became **`roles()->update(string $name, Role $role)`**. The old form took only the representation, and the library underneath builds the request path out of `$role->getName()` — so the path and the body came from the same value and **a rename could not be expressed**. Measured on `0.1.0`: asking to rename `old-name` to `new-name` sent `PUT /roles/new-name` with body `{"name":"new-name"}`, and the current name appeared nowhere in the request. Keycloak renames with `PUT /{current name}` carrying the new name in the body, so that request was not a rename — it was an update aimed at a role that does not exist yet.
 
 ```php
-// 0.1.0 — could only ever update a role in place
+// before — the one-argument form could only update a role in place
 $admin->roles()->update(new Role(name: 'reporting'));
 
-// 0.2.0 — address by the current name, put the new one in the body
+// now — address by the current name, put the new one in the body
 $admin->roles()->update('reporting', new Role(name: 'analytics'));
 
 // updating without renaming: repeat the name
