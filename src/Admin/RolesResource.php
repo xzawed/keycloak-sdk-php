@@ -33,11 +33,17 @@ final class RolesResource
     }
 
     /**
-     * fschmtt Roles::update 는 역할 이름을 $role->getName() 에서 읽는다
-     * (별도 id 인자 없음). void — 자매 언어와 동형.
+     * 현재 이름으로 주소를 잡아 롤을 갱신한다. `$role` 의 name 에 새 이름을 주면 rename 이다.
+     *
+     * ⚠️ **fschmtt `Roles::update` 를 쓰지 않는다** — 그쪽은 경로를 `$role->getName()` 에서
+     * 만들어 경로와 body 가 한 값에서 나오고, 그래서 rename 을 표현할 수 없다. 자매 8개 언어는
+     * 전부 (이름, representation) 두 인자를 받으므로 §4 동형도 이쪽이 맞다. 경위와 대체 경로는
+     * {@see RenamableRoles}.
      */
-    public function update(Role $role): void
+    public function update(string $name, Role $role): void
     {
-        ErrorTranslation::call(fn () => $this->kc->roles()->update($this->realm, $role));
+        ErrorTranslation::call(
+            fn () => $this->kc->resource(RenamableRoles::class)->updateByName($this->realm, $name, $role),
+        );
     }
 }

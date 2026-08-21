@@ -10,12 +10,10 @@ use Fschmtt\Keycloak\Keycloak;
 use Fschmtt\Keycloak\Representation\Client as ClientRepresentation;
 use Fschmtt\Keycloak\Representation\Group;
 use Fschmtt\Keycloak\Representation\Realm;
-use Fschmtt\Keycloak\Representation\Role;
 use Fschmtt\Keycloak\Representation\User;
 use Fschmtt\Keycloak\Resource\Clients;
 use Fschmtt\Keycloak\Resource\Groups;
 use Fschmtt\Keycloak\Resource\Realms;
-use Fschmtt\Keycloak\Resource\Roles;
 use Fschmtt\Keycloak\Resource\Users;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Psr7\Request;
@@ -181,23 +179,11 @@ final class AdminResourceUpdateTest extends TestCase
         (new RealmsResource($this->kcReturning('realms', $inner)))->all();
     }
 
-    public function testRolesUpdateDelegates(): void
-    {
-        $role = new Role(name: 'offline_access');
-        $inner = self::createMock(Roles::class);
-        $inner->expects($this->once())->method('update')->with(self::REALM, $role);
-
-        (new RolesResource($this->kcReturning('roles', $inner), self::REALM))->update($role);
-    }
-
-    public function testRolesUpdate404BecomesNotFound(): void
-    {
-        $inner = self::createStub(Roles::class);
-        $inner->method('update')->willThrowException($this->clientEx(404));
-
-        $this->expectException(KeycloakNotFoundError::class);
-        (new RolesResource($this->kcReturning('roles', $inner), self::REALM))->update(new Role(name: 'missing'));
-    }
+    // 롤의 update 위임·404 변환은 여기에 없다 — RolesRenameTest 로 옮겼다.
+    // 이 파일은 fschmtt Resource 를 목으로 뜨는데, 롤만은 그 경계에서 목을 뜨면
+    // **경로가 어떻게 조립되는지 볼 수 없다**. fschmtt Roles::update 는 경로를
+    // $role->getName() 에서 만들어 rename 을 표현하지 못하고, 목은 그것을 통과시킨다.
+    // 그래서 롤은 실제 HTTP 스택을 태워 경로와 body 를 함께 본다.
 
     public function testGroupsUpdateDelegates(): void
     {
