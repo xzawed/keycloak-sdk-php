@@ -1,5 +1,5 @@
 /vendor/
 /.phpunit.cache/
 /.php-cs-fixer.cache
-/composer.lock
+# ⚠️ composer.lock is committed — unlocked, CI resolves dev tools fresh and a new phpstan rule breaks the lane.
 clover.xml
