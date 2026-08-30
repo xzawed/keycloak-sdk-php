@@ -4,9 +4,9 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **`v0.2.0` is on Packagist** — `composer require xzawed/keycloak-sdk` resolves it under Composer's default `minimum-stability: stable`.
+> **`1.0.0` is on Packagist** — `composer require xzawed/keycloak-sdk` resolves `1.0.0` under Composer's default `minimum-stability: stable`.
 >
-> ⚠️ **`0.2.0` restores a capability that `0.1.0` did not have: renaming a realm role.** `roles()->update()` now takes the current name as its first argument — `update(string $name, Role $role)` — because the old one-argument form **could not express a rename at all**. See [Upgrading from `0.1.0`](https://github.com/xzawed/KeyCloakSDK/blob/main/php/README.md#upgrading-from-010).
+> ⚠️ **Coming from `0.1.0`? `roles()->update()` changed signature.** It takes the current name as its first argument — `update(string $name, Role $role)` — because the old one-argument form **could not express a rename at all**. See [Upgrading from `0.1.0`](https://github.com/xzawed/KeyCloakSDK/blob/main/php/README.md#upgrading-from-010).
 
 ## Requirements
 
@@ -18,7 +18,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 The SDK is developed in the `php/` directory of a polyglot monorepo, and Packagist cannot install from a subdirectory. Releases are therefore subtree-split into the dedicated read-only repository [`xzawed/keycloak-sdk-php`](https://github.com/xzawed/keycloak-sdk-php), which is what Packagist reads — the package name stays `xzawed/keycloak-sdk`:
 
 ```bash
-composer require "xzawed/keycloak-sdk:0.2.0"
+composer require "xzawed/keycloak-sdk:^1.0"
 ```
 
 ```php
@@ -105,7 +105,11 @@ The other eight language SDKs always took `(name, representation)`; this brings 
 
 ## Versioning and support
 
-This SDK is **pre-1.0**. Under SemVer a `0.x` **minor** bump may carry breaking changes, so read the release notes before upgrading. Only the newest released version of each language SDK receives security fixes — there are no LTS lines, and older `0.x` releases are not backported to. Full policy: [SECURITY.md](https://github.com/xzawed/KeyCloakSDK/blob/main/SECURITY.md).
+This SDK is **`1.0`** and follows SemVer: a breaking change to the public API requires a **major** bump. That promise is machine-backed — CI diffs this lane's public API against the **previously published artifact** on every build (`php-semver-checker`, judged on its report body), and a removal or an incompatible change fails the build. ⚠️ **The gate compares the API _surface_.** A change that leaves the surface identical but alters behaviour is not caught by it, so read the release notes before upgrading.
+
+Only the newest released version of each language SDK receives security fixes; there are no long-term-support lines and older releases are not backported to.
+
+**Each of the nine languages versions independently.** All nine reached `1.0.0` on the same day because they earned the same guarantee at the same time — they do **not** move in lockstep afterwards.
 
 ## Documentation
 
