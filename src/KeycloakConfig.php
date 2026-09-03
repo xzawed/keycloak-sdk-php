@@ -9,7 +9,12 @@ use Xzawed\Keycloak\Exception\KeycloakConfigError;
 /**
  * 불변 설정. 시크릿은 PHP 관용상 string이며 마스킹으로 심층방어(char[] 소거는 PHP에서 불가 — 과대광고 금지).
  */
-final readonly class KeycloakConfig
+/**
+ * ⚠️ __toString 만으로는 부족하다 — 승격된 프로퍼티가 public 이라 json_encode() 가 clientSecret 을
+ * 원문으로 뱉는다. JsonSerializable 을 함께 구현하는 이유다.
+ * 한계: var_dump()/print_r() 는 여전히 프로퍼티를 직접 읽는다.
+ */
+final readonly class KeycloakConfig implements \JsonSerializable
 {
     /**
      * JWKS 최소 재조회 간격 기본값의 **유일한 정의 자리**(초). DoS 증폭 상한이고 아홉 언어가
@@ -85,5 +90,24 @@ final readonly class KeycloakConfig
             $this->clientId,
             Masking::mask($this->clientSecret),
         );
+    }
+
+    /** @return array<string,mixed> */
+    public function jsonSerialize(): array
+    {
+        return [
+            'serverUrl' => $this->serverUrl,
+            'realm' => $this->realm,
+            'clientId' => $this->clientId,
+            'scopes' => $this->scopes,
+            'signatureAlgorithms' => $this->signatureAlgorithms,
+            'connectTimeout' => $this->connectTimeout,
+            'readTimeout' => $this->readTimeout,
+            'clockSkew' => $this->clockSkew,
+            'redirectUri' => $this->redirectUri,
+            'jwksMinRefetchSeconds' => $this->jwksMinRefetchSeconds,
+            'expectedAudience' => $this->expectedAudience,
+            'clientSecret' => Masking::mask($this->clientSecret),
+        ];
     }
 }
