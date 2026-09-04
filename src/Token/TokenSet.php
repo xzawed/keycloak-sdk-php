@@ -62,10 +62,18 @@ final readonly class TokenSet implements \JsonSerializable
         };
     }
 
+    /**
+     * ⚠️ **만료 시각을 모르면 "만료됨"이다**(fail-safe — 자매 여덟과 동형, Java 의 M.6).
+     *
+     * `false`(=아직 살아있다)를 돌려주면 `ClientCredentialsTokenProvider` 가 만료 시각 미상인
+     * 토큰을 **영원히 캐시에서 재사용**한다(그 자리의 조건이 `!$this->cached->isExpired(...)` 다).
+     * `expiresAt` 이 null 인 경우는 서버가 `expires_in` 을 안 보냈을 때뿐이라 정상 경로가 아니고,
+     * 그때 취할 안전한 쪽은 "재발급"이다.
+     */
     public function isExpired(?int $now = null, int $skew = 30): bool
     {
         if ($this->expiresAt === null) {
-            return false;
+            return true;
         }
         $now ??= \time();
 

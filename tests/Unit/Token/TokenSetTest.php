@@ -46,12 +46,17 @@ final class TokenSetTest extends TestCase
         self::assertSame('openid profile', $ts->scope);
     }
 
-    public function testFromArrayWithoutExpiresInLeavesExpiresAtNullAndNeverExpired(): void
+    /**
+     * ⚠️ 이 테스트는 한때 `assertFalse($ts->isExpired())` 였다 — **결함을 고정하고 있었다.**
+     * 만료 시각 미상을 "안 만료됨"으로 읽으면 provider 캐시가 죽은 토큰을 영원히 재사용한다.
+     * 자매 여덟(java·python·node·go·dotnet·kotlin·rust·ruby)은 전부 "만료됨"으로 읽는다.
+     */
+    public function testFromArrayWithoutExpiresInLeavesExpiresAtNullAndIsExpiredFailSafe(): void
     {
         $ts = TokenSet::fromArray(['access_token' => 'at']);
         self::assertNull($ts->expiresAt);
         self::assertSame(0, $ts->expiresIn);
-        self::assertFalse($ts->isExpired());
+        self::assertTrue($ts->isExpired(), '만료 시각 미상은 fail-safe 하게 "만료됨"이어야 한다');
     }
 
     public function testFromArrayCoercesNonStringAndNonIntScalarValues(): void
