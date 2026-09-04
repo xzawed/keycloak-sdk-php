@@ -22,6 +22,12 @@ final class JwksStore
     private bool $loadedOnce = false;
     private ?int $lastRefetchAt = null;
 
+    /**
+     * 실패한 fetch 의 백오프 — 위 30초 게이트와 **다른 축**이다(콜드 캐시 + IdP 장애).
+     * 상태 기계와 그 근거는 {@see FailureBackoff} 가 소유한다.
+     */
+    private readonly FailureBackoff $backoff;
+
     public function __construct(
         private readonly string $jwksUri,
         private readonly ClientInterface $http,
@@ -30,7 +36,9 @@ final class JwksStore
         // `final class` + public 생성자라 소비자가 파사드를 거치지 않고 직접 생성할 수 있고,
         // 예전에는 그 경로가 문서의 30이 아니라 60을 받았다(2026-08-13 Task D1).
         private readonly int $minRefetchIntervalSeconds = KeycloakConfig::DEFAULT_JWKS_MIN_REFETCH_SECONDS,
-    ) {}
+    ) {
+        $this->backoff = new FailureBackoff();
+    }
 
     /**
      * @return array<string,mixed> 선택된 JWK
@@ -62,7 +70,31 @@ final class JwksStore
         throw new TokenValidationError(sprintf('unknown kid "%s"', $kid));
     }
 
+    /**
+     * ⚠️ 백오프 검사는 fetch **직전**이자 30초 게이트 **이후**다. 콜드 캐시에서는 `getKeyByKid`
+     * 의 두 분기가 통째로 건너뛰어지므로, 이 게이트가 없으면 매 조회가 IdP 로 나간다(원래 결함).
+     */
     private function fetch(): void
+    {
+        $remaining = $this->backoff->remaining();
+        if ($remaining > 0) {
+            throw new KeycloakTransportError(sprintf(
+                'JWKS fetch backing off after %d consecutive failures (retry in %.2fs)',
+                $this->backoff->failures(),
+                $remaining,
+            ));
+        }
+        try {
+            $this->fetchOnce();
+        } catch (\Throwable $e) {
+            $this->backoff->recordFailure();
+
+            throw $e;
+        }
+        $this->backoff->recordSuccess();
+    }
+
+    private function fetchOnce(): void
     {
         $request = $this->requestFactory->createRequest('GET', $this->jwksUri);
         try {

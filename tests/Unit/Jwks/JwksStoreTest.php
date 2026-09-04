@@ -10,9 +10,16 @@ use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\{RequestInterface, ResponseInterface};
 use GuzzleHttp\Psr7\{HttpFactory, Response};
 use Xzawed\Keycloak\KeycloakConfig;
+use Xzawed\Keycloak\Jwks\FailureBackoff;
 use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\TokenValidationError;
+
+/** 프로브가 IdP 도달 횟수를 **메서드로** 읽게 하는 이음매(참조 카운터를 쓰면 phpstan 이 좁힌다). */
+interface CallCounting
+{
+    public function callCount(): int;
+}
 
 final class JwksStoreTest extends TestCase
 {
@@ -193,5 +200,97 @@ final class JwksStoreTest extends TestCase
         } catch (\Throwable) {
         }
         self::assertSame(2, $calls, '실패한 fetch도 게이트를 소모 — forged-2는 재조회 없이 rate-limited');
+    }
+
+    // ⚠️ 여기부터가 콜드 캐시 + IdP 장애 축이다. 위 30초 게이트는 *캐시가 찬 뒤*에만 걸린다 —
+    // 캐시가 비어 있고 fetch 가 계속 실패하면 그 게이트에 닿지도 못한다. 실측(2026-09-04):
+    // 20회 조회 → IdP 요청 **20건**, 7개 언어 동일.
+
+    /**
+     * 항상 503 을 내는 클라이언트.
+     *
+     * ⚠️ 카운터를 참조 인자(`int &$calls`)로 노출하지 않고 **메서드**로 읽는다 — phpstan 은 지역
+     * 스칼라를 좁혀서, 같은 변수에 대한 두 번째 `assertSame` 을 「항상 참/항상 거짓」으로 판정한다
+     * (실측: `staticMethod.alreadyNarrowedType` + `impossibleType`). 이 부류의 테스트는 창 안과
+     * 창 밖에서 **각각** 세어야 하므로 참조 카운터로는 쓸 수 없다.
+     */
+    private function failingHttp(): ClientInterface&CallCounting
+    {
+        return new class () implements ClientInterface, CallCounting {
+            private int $calls = 0;
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->calls++;
+
+                return new Response(503, [], '{"error":"service unavailable"}');
+            }
+
+            public function callCount(): int
+            {
+                return $this->calls;
+            }
+        };
+    }
+
+    public function testColdCacheFailingIdpCollapsesToOneRequest(): void
+    {
+        $http = $this->failingHttp();
+        $store = new JwksStore('http://kc/certs', $http, new HttpFactory(), minRefetchIntervalSeconds: 30);
+
+        for ($i = 0; $i < 20; $i++) {
+            try {
+                $store->getKeyByKid('k1');
+                self::fail('IdP 가 죽어 있는 동안 조회가 성공해서는 안 된다');
+            } catch (KeycloakTransportError) {
+            }
+        }
+
+        self::assertSame(1, $http->callCount(), '콜드 캐시 + IdP 장애: 20회 조회가 요청 1건이어야 한다');
+    }
+
+    /**
+     * ⚠️ 대조군 — IdP 가 복구되면 다시 나가야 한다. 「한 번 실패하면 영원히 차단」은 원래 결함보다
+     * 나쁘고, 위 단언만으로는 그것도 통과한다. 창 만료 자체는 `FailureBackoffTest` 가 시계를
+     * 주입해 재고, 여기서는 **성공이 스토어의 백오프를 실제로 되돌리는가**(배선)를 본다.
+     */
+    public function testRecoveredIdpResetsTheBackoff(): void
+    {
+        $http = new class () implements ClientInterface, CallCounting {
+            private int $calls = 0;
+            public bool $down = true;
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->calls++;
+                if ($this->down) {
+                    return new Response(503, [], '{"error":"down"}');
+                }
+
+                return new Response(200, [], json_encode(['keys' => [['kid' => 'k1', 'kty' => 'RSA']]], JSON_THROW_ON_ERROR));
+            }
+
+            public function callCount(): int
+            {
+                return $this->calls;
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, new HttpFactory(), minRefetchIntervalSeconds: 30);
+
+        try {
+            $store->getKeyByKid('k1');
+            self::fail('IdP 가 죽어 있는 동안 조회가 성공해서는 안 된다');
+        } catch (KeycloakTransportError) {
+        }
+        $backoff = (new \ReflectionProperty($store, 'backoff'))->getValue($store);
+        self::assertInstanceOf(FailureBackoff::class, $backoff);
+        self::assertSame(1, $backoff->failures(), '실패한 fetch 는 카운터를 올려야 한다');
+
+        // 창을 넘긴다(상한 5초보다 크게) — sleep 대신 백오프의 시계를 지나가게 만든다.
+        $http->down = false;
+        (new \ReflectionProperty($backoff, 'lastFailureAt'))->setValue($backoff, null);
+        self::assertSame('k1', $store->getKeyByKid('k1')['kid']);
+        self::assertSame(0, $backoff->failures(), '성공은 카운터를 0으로 되돌려야 한다');
+        self::assertSame(2, $http->callCount());
     }
 }
