@@ -73,9 +73,9 @@ Admin failures surface as `KeycloakNotFoundError` / `KeycloakConflictError` / `K
 - **Hardened claims** — exact `iss` match, `aud` containment check, mandatory `exp` (a token without one is rejected), and a bounded clock skew (`clockSkew:`, default 30s).
 - **DoS-safe JWKS** — a refetch is triggered only by an unresolved key ID (rotation) and never by a bad signature, and is rate-limited by `jwksMinRefetchSeconds:` (default 30s) — so **once the key set has been fetched**, no volume of forged random `kid`s makes the SDK issue more than one JWKS request per interval. A *failed* fetch is bounded separately: consecutive failures back off exponentially (0.2s, doubling, capped at 5s, with jitter), and inside that window the SDK **fails fast without contacting the IdP**. So a cold cache during an IdP outage no longer turns every validation into a request (measured: 20 attempts → 1 request, down from 20). ⚠️ The SDK never sleeps — it returns the error immediately, so retry pacing stays the caller's decision. ⚠️ Like the refetch gate itself, this state is per-instance: under classic PHP-FPM a fresh store is built per request, so the bound holds within one request.
 - **OIDC nonce / `id_token` replay protection** — `createAuthorizationRequest()` always issues a cryptographic nonce, puts it on the authorization URL, and returns it on `AuthorizationRequest::$nonce`. Pass that value as the optional third argument to `exchangeCode()` and the SDK fully validates the `id_token` (signature · `iss` · `aud` · `exp`) before comparing the nonce claim. Omit it and id_token validation is skipped (same opt-out as the other eight languages).
-- **Secret handling** — `KeycloakConfig` and `TokenSet` mask secrets and tokens fully (`***`, no prefix) in their `__toString()`; TLS verification is on by default and both connect and read timeouts are always applied.
+- **Secret handling** — `KeycloakConfig`, `TokenSet` and `AuthorizationRequest` mask secrets, tokens and the PKCE verifier fully (`***`, no prefix) in both `__toString()` and `json_encode()` (all three implement `JsonSerializable`); TLS verification is on by default and both connect and read timeouts are always applied.
 
-Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksStore` in-memory state, so their reach follows your deployment model: under a long-running worker (Swoole, RoadRunner) they span requests, but under classic PHP-FPM every request builds a fresh store and the limit only binds within that one request. And masking covers this SDK's own `__toString()` — PHP has no erasable string type, so the client secret lives in an ordinary `string` for its lifetime and masking is defence in depth, not a guarantee about your logs.
+Two scope limits worth knowing. The JWKS cache and its rate limit are per-`JwksStore` in-memory state, so their reach follows your deployment model: under a long-running worker (Swoole, RoadRunner) they span requests, but under classic PHP-FPM every request builds a fresh store and the limit only binds within that one request. And masking covers this SDK's own `__toString()` and `json_encode()`, but not the engine dumps — `var_dump()`, `print_r()` and `var_export()` read the properties directly and print the raw value. PHP also has no erasable string type, so the client secret lives in an ordinary `string` for its lifetime: masking is defence in depth, not a guarantee about your logs.
 
 ## Upgrading from `0.1.0`
 
@@ -109,7 +109,7 @@ This SDK is **`1.0`** and follows SemVer: a breaking change to the public API re
 
 Only the newest released version of each language SDK receives security fixes; there are no long-term-support lines and older releases are not backported to.
 
-**Each of the nine languages versions independently.** All nine reached `1.0.0` on the same day because they earned the same guarantee at the same time — they do **not** move in lockstep afterwards.
+**Each of the nine languages versions independently.** All nine reached `1.0.0` in the same release wave because they earned the same guarantee at the same time — they do **not** move in lockstep afterwards.
 
 ## Documentation
 
