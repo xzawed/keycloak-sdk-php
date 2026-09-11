@@ -19,7 +19,7 @@ final readonly class TokenSet implements \JsonSerializable
         public string $tokenType = 'Bearer',
         public int $expiresIn = 0,
         #[\SensitiveParameter] public ?string $refreshToken = null,
-        public ?string $idToken = null,
+        #[\SensitiveParameter] public ?string $idToken = null,
         public ?string $scope = null,
         public ?int $expiresAt = null,
     ) {}

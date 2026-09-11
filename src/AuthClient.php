@@ -73,8 +73,11 @@ final class AuthClient
      * 방지. 불일치·부재·검증실패는 모두 거부(fail-closed). null이면 id_token 검증을 건너뛴다
      * (여덟 언어 공통 패턴 — 필수로 만들지 않는다).
      */
-    public function exchangeCode(string $code, string $codeVerifier, ?string $expectedNonce = null): TokenSet
-    {
+    public function exchangeCode(
+        #[\SensitiveParameter] string $code,
+        #[\SensitiveParameter] string $codeVerifier,
+        ?string $expectedNonce = null,
+    ): TokenSet {
         $this->provider->setPkceCode($codeVerifier);
         $tokens = $this->toTokenSet($this->getAccessToken('authorization_code', ['code' => $code]));
         if ($expectedNonce !== null) {
@@ -89,7 +92,7 @@ final class AuthClient
      * 거부는 자매 언어와 같이 Auth 계급(KeycloakAuthError)이다 — TokenValidationError는
      * validator가 던지고 여기서 감싼다(Ruby AuthError 동형).
      */
-    private function requireValidNonce(?string $idToken, string $expectedNonce): void
+    private function requireValidNonce(#[\SensitiveParameter] ?string $idToken, string $expectedNonce): void
     {
         if ($idToken === null || $idToken === '') {
             throw new KeycloakAuthError('authorization code exchange failed: missing id_token for nonce validation');
@@ -120,17 +123,17 @@ final class AuthClient
         return $this->toTokenSet($this->getAccessToken('client_credentials', $options));
     }
 
-    public function refresh(string $refreshToken): TokenSet
+    public function refresh(#[\SensitiveParameter] string $refreshToken): TokenSet
     {
         return $this->toTokenSet($this->getAccessToken('refresh_token', ['refresh_token' => $refreshToken]));
     }
 
-    public function validate(string $accessToken): ValidatedToken
+    public function validate(#[\SensitiveParameter] string $accessToken): ValidatedToken
     {
         return $this->validator->validate($accessToken);
     }
 
-    public function introspect(string $token): IntrospectionResult
+    public function introspect(#[\SensitiveParameter] string $token): IntrospectionResult
     {
         // RFC 7662 — league/stevenmaguire 미제공, 손수 POST(client_secret_basic)
         // RFC 6749 §2.3.1: Basic 자격증명은 각 구성요소를 먼저 percent-encode한다
@@ -165,7 +168,7 @@ final class AuthClient
         return $this->provider->getLogoutUrl(['access_token' => $token]);
     }
 
-    public function logout(string $refreshToken): void
+    public function logout(#[\SensitiveParameter] string $refreshToken): void
     {
         // 백채널 end_session POST(refresh_token + client creds) — league/stevenmaguire 미제공
         try {
