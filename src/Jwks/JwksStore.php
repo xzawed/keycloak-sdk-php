@@ -17,6 +17,21 @@ use Xzawed\Keycloak\Exception\TokenValidationError;
  */
 final class JwksStore
 {
+    /**
+     * JWKS 응답 본문의 바이트 상한. 51200 은 Nimbus `RemoteJWKSet.DEFAULT_HTTP_SIZE_LIMIT` 이고
+     * go(`jwksMaxBytes`)·rust(`JWKS_MAX_BYTES`)·ruby·java·kotlin 이 같은 수를 쓴다.
+     *
+     * ⚠️ 예전에는 상한이 없었고, 게다가 **상태 검사보다 먼저** `(string) $response->getBody()` 로
+     * 본문을 통째로 슬러프했다 — 손상된 IdP 의 500 거대 본문도 그대로 메모리에 올렸다.
+     */
+    public const JWKS_MAX_BYTES = 51200;
+
+    /**
+     * 스트림을 읽는 청크 크기. ⚠️ `Content-Length` 로만 판정하면 그 헤더가 없거나 거짓인 응답을
+     * 놓친다 — 청크를 받으며 누적치가 상한을 넘는 순간 읽기를 끊는다.
+     */
+    public const JWKS_READ_CHUNK_BYTES = 8192;
+
     /** @var array<string,array<string,mixed>> kid → JWK */
     private array $keys = [];
     private bool $loadedOnce = false;
@@ -102,7 +117,19 @@ final class JwksStore
         } catch (ClientExceptionInterface $e) {
             throw new KeycloakTransportError('JWKS fetch failed', previous: $e);
         }
-        $json = json_decode((string) $response->getBody(), true);
+        // ⚠️ 상한은 **상태와 무관하게** 건다. 200 만 겨누면 오류 응답의 거대 본문이 그대로
+        // 들어온다 — 그게 수정 전의 순서였다(상태 검사 전에 전체 슬러프 + `json_decode`).
+        $body = $response->getBody();
+        $buf = '';
+        while (!$body->eof()) {
+            $buf .= $body->read(self::JWKS_READ_CHUNK_BYTES);
+            if (strlen($buf) > self::JWKS_MAX_BYTES) {
+                throw new KeycloakTransportError(
+                    sprintf('JWKS response exceeds %d bytes', self::JWKS_MAX_BYTES),
+                );
+            }
+        }
+        $json = json_decode($buf, true);
         if ($response->getStatusCode() !== 200 || !is_array($json) || !isset($json['keys']) || !is_array($json['keys'])) {
             throw new KeycloakTransportError('JWKS response invalid');
         }

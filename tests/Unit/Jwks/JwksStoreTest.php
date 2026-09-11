@@ -133,6 +133,103 @@ final class JwksStoreTest extends TestCase
         self::assertSame('k2', $store->getKeyByKid('k2')['kid']);   // rotated key picked up via refetch
     }
 
+    /**
+     * ⚠️ **크기 상한 축.** go·rust·java·kotlin 은 51200(Nimbus `RemoteJWKSet.DEFAULT_HTTP_SIZE_LIMIT`)
+     * 을 가지고 있었고 php 만 없었다. 게다가 php 는 상태 검사보다 **먼저** `(string) getBody()` 로
+     * 본문을 통째로 슬러프했다 — 500 의 거대 본문도 그대로 메모리에 올렸다.
+     */
+    public function testOversizedJwksBodyRejected(): void
+    {
+        $f = new HttpFactory();
+        $big = str_repeat('x', JwksStore::JWKS_MAX_BYTES + 1);
+        $http = new class ($big) implements ClientInterface {
+            public function __construct(private string $big) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return new Response(200, [], $this->big);
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, $f);
+        $this->expectException(KeycloakTransportError::class);
+        $this->expectExceptionMessageMatches('/exceeds/');
+        $store->getKeyByKid('k1');
+    }
+
+    /** ⚠️ **대조군을 지우지 말 것** — 위 단언만 두면 「어떤 본문이든 거부한다」로도 통과한다. */
+    public function testUnderSizedJwksBodyStillResolves(): void
+    {
+        $calls = 0;
+        $f = new HttpFactory();
+        $store = new JwksStore('http://kc/certs', $this->http([['kid' => 'k1', 'kty' => 'RSA']], $calls), $f);
+        self::assertSame('k1', $store->getKeyByKid('k1')['kid']);
+    }
+
+    /**
+     * ⚠️ 상한은 **상태와 무관하게** 걸려야 한다. 200 만 겨누면 오류 응답의 거대 본문이 그대로
+     * 들어온다 — 그게 수정 전 php 의 순서였다.
+     */
+    public function testOversizedErrorResponseBodyAlsoRejected(): void
+    {
+        $f = new HttpFactory();
+        $big = str_repeat('x', JwksStore::JWKS_MAX_BYTES + 1);
+        $http = new class ($big) implements ClientInterface {
+            public function __construct(private string $big) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return new Response(500, [], $this->big);
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, $f);
+        $this->expectException(KeycloakTransportError::class);
+        $store->getKeyByKid('k1');
+    }
+
+    /**
+     * ⚠️ **예외를 던지는 것만으로는 「슬러프하지 않는다」의 증거가 못 된다** — 다 읽고 나서
+     * 길이를 재도 그 단언은 참이다. 스트림이 실제로 생산한 바이트를 세어, 상한 + 청크 하나
+     * 안에서 읽기가 끊겼음을 본다.
+     */
+    public function testOversizedBodyIsNotFullySlurped(): void
+    {
+        $f = new HttpFactory();
+        $produced = 0;
+        // 상한의 100 배를 흘리는 스트림. 끊지 않으면 5MB 를 전부 생산한다.
+        $stream = new \GuzzleHttp\Psr7\PumpStream(
+            function (int $length) use (&$produced): string {
+                $produced += $length;
+                return str_repeat('x', $length);
+            },
+            ['size' => JwksStore::JWKS_MAX_BYTES * 100],
+        );
+        $http = new class ($stream) implements ClientInterface {
+            public function __construct(private \Psr\Http\Message\StreamInterface $stream) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return new Response(200, [], $this->stream);
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, $f);
+        try {
+            $store->getKeyByKid('k1');
+            self::fail('oversized body should have been rejected');
+        } catch (KeycloakTransportError) {
+            // expected
+        }
+        self::assertLessThanOrEqual(
+            JwksStore::JWKS_MAX_BYTES + JwksStore::JWKS_READ_CHUNK_BYTES,
+            $produced,
+            'read must abort at the cap, not after slurping the whole stream',
+        );
+    }
+
+    // ⚠️ **「상한이 51200 이다」를 여기서 단언하지 않는다** — php 에서는 상수 대 리터럴 비교가
+    // 컴파일 시점에 참으로 확정돼 정보를 담지 않는다(phpstan `staticMethod.alreadyNarrowedType`
+    // 이 그것을 지적했다). 값이 자매 언어와 같은지는 교차언어 축이 본다:
+    // `sh scripts/test/test-security-defaults.sh` 의 「JWKS 응답 크기 상한」.
+
     public function testInvalidJwksResponseShapeMappedToTransportError(): void
     {
         $f = new HttpFactory();
