@@ -45,15 +45,26 @@ final class AuthClient
         ], ['httpClient' => $http]);
     }
 
-    public function createAuthorizationRequest(): AuthorizationRequest
+    /**
+     * @param string|null $redirectUri 이 요청에만 쓸 콜백 URL. null이면 config 값.
+     *   ⚠️ 콜백이 여럿인 앱(멀티테넌트·환경별)이 클라이언트 하나로 그것을 섬기기 위한 자리다 —
+     *   나머지 여덟 SDK와 동형. **`exchangeCode()`에 같은 값을 넘겨야 한다**(RFC 6749 §4.1.3).
+     */
+    public function createAuthorizationRequest(?string $redirectUri = null): AuthorizationRequest
     {
         // league/oauth2-client getAuthorizationUrl(['nonce' => $n])는 쿼리에 nonce=를 그대로 싣는다
         // (실측 2026-08-15: HAS_NONCE_KEY=yes MATCHES=yes). pkceMethod 생성자 옵션의 no-op과 다른 부류.
         $nonce = self::randomUrlSafe();
-        $url = $this->provider->getAuthorizationUrl([
+        $options = [
             'scope' => implode(' ', $this->config->scopes),
             'nonce' => $nonce,
-        ]);
+        ];
+        // ⚠️ 키가 비어 있으면 상류가 생성자 값으로 채운다(`AbstractProvider::getAuthorizationParameters`).
+        // 그래서 null일 때는 **키 자체를 넣지 않는다** — 빈 문자열을 넣으면 config 폴백이 죽는다.
+        if ($redirectUri !== null) {
+            $options['redirect_uri'] = $redirectUri;
+        }
+        $url = $this->provider->getAuthorizationUrl($options);
         $verifier = $this->provider->getPkceCode();
 
         return new AuthorizationRequest(
@@ -77,9 +88,16 @@ final class AuthClient
         #[\SensitiveParameter] string $code,
         #[\SensitiveParameter] string $codeVerifier,
         ?string $expectedNonce = null,
+        ?string $redirectUri = null,
     ): TokenSet {
         $this->provider->setPkceCode($codeVerifier);
-        $tokens = $this->toTokenSet($this->getAccessToken('authorization_code', ['code' => $code]));
+        $options = ['code' => $code];
+        // ⚠️ 인가 때 쓴 값과 **같아야** 한다(RFC 6749 §4.1.3) — 다르면 Keycloak이 거부한다.
+        // null일 때 키를 넣지 않는 이유는 createAuthorizationRequest()와 같다(상류 폴백 보존).
+        if ($redirectUri !== null) {
+            $options['redirect_uri'] = $redirectUri;
+        }
+        $tokens = $this->toTokenSet($this->getAccessToken('authorization_code', $options));
         if ($expectedNonce !== null) {
             $this->requireValidNonce($tokens->idToken, $expectedNonce);
         }
