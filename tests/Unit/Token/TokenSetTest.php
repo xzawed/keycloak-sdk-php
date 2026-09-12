@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Tests\Unit\Token;
 
 use PHPUnit\Framework\TestCase;
+use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Token\TokenSet;
 
@@ -95,5 +96,49 @@ final class TokenSetTest extends TestCase
 
         $ts2 = TokenSet::fromArray(['access_token' => 'at', 'expires_in' => '60'], now: 1000);
         self::assertSame(60, $ts2->expiresIn);
+    }
+
+    /**
+     * ⚠️ **존재 검사는 타입 검사가 아니다.** `toStr` 가 스칼라를 강제변환해 `12345` 가
+     * `"12345"` 라는 **쓸 수 없는 토큰**으로 통과했고, 소비자는 그것을 Bearer 로 실어
+     * 보내 매번 401 을 받는다(조용한 반복 실패).
+     *
+     * ⚠️ `expires_in` 의 문자열 허용은 **의도된 것**이라 그대로 둔다(바로 위 테스트).
+     * 여기서 좁히는 것은 `access_token` 하나다.
+     *
+     * @return iterable<string, array{mixed}>
+     */
+    public static function badAccessTokens(): iterable
+    {
+        yield 'int' => [12345];
+        yield 'float' => [1.5];
+        yield 'bool' => [true];
+        yield 'null' => [null];
+        yield 'array' => [['a' => 1]];
+        yield 'empty string' => [''];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('badAccessTokens')]
+    public function testNonStringAccessTokenIsRejected(mixed $bad): void
+    {
+        $this->expectException(KeycloakAuthError::class);
+        TokenSet::fromArray(['access_token' => $bad, 'token_type' => 'Bearer']);
+    }
+
+    public function testMissingAccessTokenIsRejected(): void
+    {
+        $this->expectException(KeycloakAuthError::class);
+        TokenSet::fromArray(['token_type' => 'Bearer']);
+    }
+
+    /**
+     * ⚠️ **팩토리만 지키면 우회된다.** `AuthClient::toTokenSet()` 은 `fromArray` 가 아니라
+     * `new TokenSet(...)` 를 직접 부른다(독립 레그가 지목한 구멍) — 그래서 검증이 생성자에
+     * 있고, 이 테스트가 그 자리를 못박는다.
+     */
+    public function testEmptyAccessTokenIsRejectedByTheConstructor(): void
+    {
+        $this->expectException(KeycloakAuthError::class);
+        new TokenSet(accessToken: '');
     }
 }
