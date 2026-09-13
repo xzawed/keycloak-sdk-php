@@ -10,7 +10,10 @@ use Xzawed\Keycloak\Masking;
  * ⚠️ codeVerifier 는 코드 교환의 **소유 증명 비밀**이다 — 인가 코드를 훔친 공격자가 로그에서
  * 이 값을 얻으면 흐름을 완성한다. 그래서 __toString 과 JsonSerializable 을 함께 둔다(형제
  * TokenSet 과 같은 규약). url/state/nonce 는 가리지 않는다 — Rust 의 Debug impl 과 동형이다.
- * 한계: var_dump()/print_r() 는 여전히 프로퍼티를 직접 읽는다.
+ * 한계: __debugInfo() 가 var_dump()/print_r()/debug_zval_dump() 를 덮지만 **var_export() 는
+ * 덮지 못한다**(PHP 8.3.32 실측 — private 프로퍼티까지 원문으로 찍는다). get_object_vars()·
+ * (array) 캐스트·foreach·공개 프로퍼티 읽기도 경계 밖이다. 과대광고하지 말 것 — 이것은
+ * 우발적 로깅에 대한 심층 방어이지 기밀 경계가 아니다.
  */
 final readonly class AuthorizationRequest implements \JsonSerializable
 {
@@ -43,5 +46,20 @@ final readonly class AuthorizationRequest implements \JsonSerializable
             'nonce' => $this->nonce,
             'codeVerifier' => Masking::mask($this->codeVerifier),
         ];
+    }
+
+    /**
+     * ⚠️ 덤프 계열(`var_dump`·`print_r`·`debug_zval_dump`)은 `__toString` 과 `jsonSerialize` 를
+     * **우회해 프로퍼티를 직접 읽는다**. 이 훅이 그 경로를 덮는다(PHP 8.3.32 실측 — `print_r` 도
+     * 이 훅을 존중한다. ⚠️ **`var_export` 는 존중하지 않고 private 까지 원문으로 찍는다** —
+     * 그것은 훅으로 막을 수 없는 경계다).
+     *
+     * 마스킹 정의를 두 곳에 두지 않는다 — 이미 마스킹된 `jsonSerialize()` 에 위임한다.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return $this->jsonSerialize();
     }
 }

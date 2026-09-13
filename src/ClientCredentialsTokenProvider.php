@@ -25,6 +25,23 @@ final class ClientCredentialsTokenProvider implements TokenProvider
         private readonly StreamFactoryInterface $streamFactory,
     ) {}
 
+    /**
+     * ⚠️ 덤프 계열이 프로퍼티를 직접 읽으므로, 캐시된 `TokenSet` 과 중첩 `KeycloakConfig` 이
+     * 그대로 찍힌다(실측 2026-09-12: `var_dump($provider)` 가 액세스 토큰과 `clientSecret` 을
+     * **둘 다 원문**으로 찍었다). ⚠️ 캐시 **유무는 남긴다** — 빈 캐시에 `***` 를 찍으면
+     * 「토큰을 들고 있다」는 거짓 신호가 된다.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return [
+            'config' => $this->config,
+            'cached' => $this->cached === null ? null : '***',
+            'endpoints' => $this->endpoints,
+        ];
+    }
+
     public function getToken(): string
     {
         if ($this->cached !== null && !$this->cached->isExpired(skew: $this->config->clockSkew)) {

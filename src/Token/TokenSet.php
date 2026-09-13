@@ -10,8 +10,10 @@ use Xzawed\Keycloak\Masking;
 /**
  * ⚠️ 마스킹을 __toString 에만 걸면 PHP 의 **기본 직렬화기**가 그것을 우회한다 — 승격된
  * 프로퍼티가 public 이라 json_encode() 가 원문을 뱉는다. 그래서 JsonSerializable 을 함께 구현한다.
- * 한계: var_dump()/print_r()/var_export() 는 여전히 프로퍼티를 직접 읽는다(언어 차원의 경계다 —
- * .NET 의 Serilog {@} 파괴적 로깅, Node 의 구조분해와 같은 부류). 과대광고하지 말 것.
+ * 한계: __debugInfo() 가 var_dump()/print_r()/debug_zval_dump() 를 덮지만 **var_export() 는
+ * 덮지 못한다**(PHP 8.3.32 실측 — private 프로퍼티까지 원문으로 찍는다). get_object_vars()·
+ * (array) 캐스트·foreach·공개 프로퍼티 읽기도 경계 밖이다. 과대광고하지 말 것 — 이것은
+ * 우발적 로깅에 대한 심층 방어이지 기밀 경계가 아니다.
  */
 final readonly class TokenSet implements \JsonSerializable
 {
@@ -121,5 +123,20 @@ final readonly class TokenSet implements \JsonSerializable
             'refreshToken' => Masking::mask($this->refreshToken),
             'idToken' => Masking::mask($this->idToken),
         ];
+    }
+
+    /**
+     * ⚠️ 덤프 계열(`var_dump`·`print_r`·`debug_zval_dump`)은 `__toString` 과 `jsonSerialize` 를
+     * **우회해 프로퍼티를 직접 읽는다**. 이 훅이 그 경로를 덮는다(PHP 8.3.32 실측 — `print_r` 도
+     * 이 훅을 존중한다. ⚠️ **`var_export` 는 존중하지 않고 private 까지 원문으로 찍는다** —
+     * 그것은 훅으로 막을 수 없는 경계다).
+     *
+     * 마스킹 정의를 두 곳에 두지 않는다 — 이미 마스킹된 `jsonSerialize()` 에 위임한다.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return $this->jsonSerialize();
     }
 }
