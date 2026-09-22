@@ -390,4 +390,70 @@ final class JwksStoreTest extends TestCase
         self::assertSame(0, $backoff->failures(), '성공은 카운터를 0으로 되돌려야 한다');
         self::assertSame(2, $http->callCount());
     }
+
+    /**
+     * ⚠️ **빈 키셋 200 은 좋은 캐시를 덮어서는 안 된다.** go 의 #380 픽스는 절반이 상태코드,
+     * 나머지 절반이 `len(ks.Keys) == 0` 거부였는데 자매 SDK 로는 앞 절반만 복제됐다. `[]` 는
+     * 배열이라 위의 shape 검사를 그대로 통과한다. 프록시·WAF·반쯤 뜬 realm 이 200 +
+     * `{"keys":[]}` 를 주면 검증기가 눈이 멀고 refetch 게이트가 복구까지 막는다(실측 재현).
+     */
+    public function testEmptyKeySetOnColdStartIsTransportError(): void
+    {
+        $calls = 0;
+        $f = new HttpFactory();
+        $store = new JwksStore('http://kc/certs', $this->http([], $calls), $f, minRefetchIntervalSeconds: 0);
+        $this->expectException(KeycloakTransportError::class);
+        $this->expectExceptionMessageMatches('/no keys/');
+        $store->getKeyByKid('k1');
+    }
+
+    public function testEmptyKeySetDoesNotClobberAGoodCache(): void
+    {
+        $f = new HttpFactory();
+        $responses = [
+            json_encode(['keys' => [['kid' => 'k1', 'kty' => 'RSA']]], JSON_THROW_ON_ERROR),
+            json_encode(['keys' => []], JSON_THROW_ON_ERROR),
+        ];
+        $http = new class ($responses) implements ClientInterface {
+            private int $call = 0;
+
+            /** @param non-empty-list<string> $responses */
+            public function __construct(private readonly array $responses) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $index = min($this->call, count($this->responses) - 1);
+                $body = $this->responses[$index];
+                $this->call++;
+                return new Response(200, [], $body);
+            }
+        };
+        $store = new JwksStore('http://kc/certs', $http, $f, minRefetchIntervalSeconds: 0);
+        self::assertSame('k1', $store->getKeyByKid('k1')['kid'], '사전조건: 좋은 캐시');
+
+        // 미해결 kid 재조회가 빈 200 을 받는다 — 실패해야 한다.
+        try {
+            $store->getKeyByKid('k2');
+            self::fail('빈 키셋 재조회는 실패해야 한다');
+        } catch (KeycloakTransportError | TokenValidationError) {
+            // 어느 쪽이든 「성공」이 아니면 된다.
+        }
+
+        // 핵심: 방금 검증되던 k1 이 살아 있어야 한다.
+        self::assertSame('k1', $store->getKeyByKid('k1')['kid'], '빈 200 이 좋은 캐시를 덮었다');
+    }
+
+    /**
+     * kid 가 없는 항목만 담긴 **비어 있지 않은** 배열도 저장되는 맵은 빈 맵이다 —
+     * 「실제로 올릴 집합이 0 개면 거부」라는 같은 규칙이 이것도 잡아야 한다.
+     */
+    public function testNonEmptyArrayWithNoUsableKidIsAlsoRejected(): void
+    {
+        $calls = 0;
+        $f = new HttpFactory();
+        $store = new JwksStore('http://kc/certs', $this->http([['kty' => 'RSA']], $calls), $f, minRefetchIntervalSeconds: 0);
+        $this->expectException(KeycloakTransportError::class);
+        $this->expectExceptionMessageMatches('/no keys/');
+        $store->getKeyByKid('k1');
+    }
 }

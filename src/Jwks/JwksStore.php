@@ -144,6 +144,16 @@ final class JwksStore
                 $map[$kid] = $jwk;
             }
         }
+        // ⚠️ **올릴 것이 0 개면 쓰지 않는다**(go/jwt.go 와 동형 — 그쪽 #380 픽스의 나머지 절반).
+        // `[]` 는 배열이라 위 shape 검사를 그대로 통과하고, kid 없는 항목만 담긴 **비어 있지 않은**
+        // 배열도 여기서 빈 맵이 된다 — 둘 다 같은 실패다. 200 + 빈 키셋을 주는 것은 키를 전부
+        // 회수한 IdP 가 아니라 프록시·WAF·반쯤 뜬 realm 이고, 좋은 캐시를 덮으면 방금 검증되던
+        // 토큰이 거부되며 refetch 게이트가 복구까지 막는다. 덮기 전에 전송 오류로 끊는다
+        // (그러지 않으면 「unknown kid」로 **오분류**되어 전송 문제가 토큰 탓이 된다 — 실측).
+        // ⚠️ 여기서 멈춘다 — `kty`·`n`·`e` 검증으로 번지면 JWKS 스키마 검사가 된다.
+        if ($map === []) {
+            throw new KeycloakTransportError('JWKS response contains no keys');
+        }
         $this->keys = $map;
         $this->loadedOnce = true;
     }
