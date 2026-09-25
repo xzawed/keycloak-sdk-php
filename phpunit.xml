@@ -9,10 +9,19 @@
   </testsuites>
   <source>
     <include><directory>src</directory></include>
-    <!-- 네트워크 경계 — 통합테스트로 검증, 커버리지 게이트에서 제외 -->
+    <!-- 네트워크 경계 — 통합테스트로 검증, 커버리지 게이트에서 제외.
+         ⚠️ src/Admin 은 디렉터리가 아니라 **파일로** 적는다 — 디렉터리로 두면 I/O 없는 ErrorTranslation.php
+         까지 삼켜, 그 `default` 팔과 SDK 예외 통과 분기를 바꿔도 게이트가 몰랐다(변이 실측 2/2 SILENT).
+         손 목록이라 새 src/Admin 파일은 **측정되는** 쪽으로 떨어진다(node vitest.config.ts 와 같은 판정). -->
     <exclude>
       <file>src/AuthClient.php</file>
-      <directory>src/Admin</directory>
+      <file>src/Admin/AdminClient.php</file>
+      <file>src/Admin/ClientsResource.php</file>
+      <file>src/Admin/GroupsResource.php</file>
+      <file>src/Admin/RealmsResource.php</file>
+      <file>src/Admin/RenamableRoles.php</file>
+      <file>src/Admin/RolesResource.php</file>
+      <file>src/Admin/UsersResource.php</file>
       <file>src/KeycloakClient.php</file>
     </exclude>
   </source>

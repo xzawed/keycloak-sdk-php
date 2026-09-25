@@ -61,6 +61,45 @@ final class ErrorTranslationTest extends TestCase
         $this->expectException(KeycloakAdminError::class);
         ErrorTranslation::call(fn () => throw new SerializerException('bad json'));
     }
+    /**
+     * 404/409/403 밖의 4xx 는 `default` 팔로 간다. ⚠️ 하위 타입(NotFound 등)도 `KeycloakAdminError` 라
+     * `expectException(KeycloakAdminError::class)` 로는 팔을 잘못 고른 것을 못 잡는다 — 정확한 클래스를 본다.
+     * 이 테스트가 없을 때 `default` 를 NotFound 로 바꿔도 단위 스위트 전부가 통과했다(변이 실측).
+     */
+    public function testMapsOther4xxToExactAdminError(): void
+    {
+        foreach ([400, 401] as $status) {
+            $e = self::thrownBy(fn () => ErrorTranslation::call(fn () => throw $this->clientEx($status)));
+            self::assertSame(KeycloakAdminError::class, $e::class, "HTTP $status");
+            self::assertSame($status, $e->getStatusCode(), "HTTP $status");
+        }
+    }
+
+    /**
+     * 우리 자신의 SDK 예외는 재래핑하지 않고 **그 객체 그대로** 나간다. 이 분기가 없으면 `\Throwable` 그물이
+     * 받아 새 `KeycloakAdminError` 로 감싸 타입(NotFound → AdminError)을 잃는다 — 그래도 단위 스위트는
+     * 전부 통과했다(변이 실측).
+     */
+    public function testPassesThroughOwnSdkExceptionUnwrapped(): void
+    {
+        $own = new KeycloakNotFoundError('already translated', 404);
+        self::assertSame($own, self::thrownBy(fn () => ErrorTranslation::call(fn () => throw $own)));
+    }
+
+    /**
+     * 던져진 것을 돌려준다. `ErrorTranslation::call(fn () => throw …)` 을 직접 try 로 감싸면 PHPStan 이
+     * never 로 좁혀 그 뒤의 `fail()` 을 죽은 코드로 본다 — 그렇다고 `fail()` 을 지우면 **안 던져도 통과**한다.
+     */
+    private static function thrownBy(callable $fn): \Throwable
+    {
+        try {
+            $fn();
+        } catch (\Throwable $e) {
+            return $e;
+        }
+        self::fail('예외가 던져지지 않았다');
+    }
+
     public function testPassesThroughReturn(): void
     {
         // 리터럴 'ok' 대신 런타임 생성 문자열 사용 — PHPStan이 @template T를 리터럴 타입으로 좁혀
