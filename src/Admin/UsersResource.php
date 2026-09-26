@@ -13,6 +13,16 @@ final class UsersResource
 {
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
+    /**
+     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return ['realm' => $this->realm];
+    }
+
     /** 생성 후 id를 얻으려면 search 후속(fschmtt create는 void). */
     public function create(User $user): void
     {

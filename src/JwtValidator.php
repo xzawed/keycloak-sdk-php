@@ -23,7 +23,7 @@ final class JwtValidator
         private readonly JwksStore $jwks,
     ) {}
 
-    public function validate(string $jwt): ValidatedToken
+    public function validate(#[\SensitiveParameter] string $jwt): ValidatedToken
     {
         // (1) 헤더 사전 게이트 — firebase 디코드 이전에 우리가 직접 첫 세그먼트를 파싱해 alg를
         // RS256로 핀하고 none/미서명/다른 alg를 즉시 거부한다. firebase의 &$headers out-param은
@@ -92,7 +92,7 @@ final class JwtValidator
     }
 
     /** @return array<string,mixed> */
-    private function decodeHeader(string $jwt): array
+    private function decodeHeader(#[\SensitiveParameter] string $jwt): array
     {
         $parts = explode('.', $jwt);
         if (count($parts) !== 3) {

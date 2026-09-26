@@ -24,7 +24,9 @@ final class SensitiveParameterTest extends TestCase
      * 비밀을 뜻하는 파라미터 이름. ⚠️ `nonce`·`state` 는 **비밀이 아니다**(재생 방지용
      * 공개값이라 URL 로 이동한다) — 여기 넣으면 가드가 사실이 아닌 것을 강제한다.
      */
-    private const SECRET_NAME = '/(secret|password|credential|verifier|(^|_|[a-z])(code|token)s?$)/i';
+    // ⚠️ `jwt` 는 2026-09-26 에 더했다 — 이름이 `$jwt` 인 원문 토큰(`JwtValidator::validate`·`decodeHeader`)을
+    // 정규식이 못 골라 #467 이 그 두 자리를 빠뜨렸고, 트레이스가 토큰 앞 15 자를 찍었다(실측).
+    private const SECRET_NAME = '/(secret|password|credential|verifier|(^|_|[a-z])(code|token|jwt)s?$)/i';
 
     /** @return list<class-string> */
     private static function sdkClasses(): array
@@ -74,6 +76,12 @@ final class SensitiveParameterTest extends TestCase
             $hits++;
         }
         self::assertGreaterThanOrEqual(8, $hits, '비밀 이름 정규식이 고른 파라미터가 너무 적다 — 정규식이 낡았나?');
+        // 이름이 `$jwt` 인 원문 토큰을 고르는가 — 그 이름을 못 골라 #467 이 두 자리를 빠뜨렸다.
+        $picked = [];
+        foreach ($this->secretStringParameters() as [$where, $param]) {
+            $picked[] = $where . '($' . $param->getName() . ')';
+        }
+        self::assertContains('JwtValidator::validate($jwt)', $picked, '정규식이 원문 JWT 파라미터를 못 고른다');
     }
 
     public function testEverySecretStringParameterIsMarkedSensitive(): void

@@ -13,6 +13,16 @@ final class ClientsResource
 {
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
+    /**
+     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return ['realm' => $this->realm];
+    }
+
     /** fschmtt는 import(create 아님) — id를 세팅해야 내부 re-GET이 성립. */
     public function import(Client $client): Client
     {

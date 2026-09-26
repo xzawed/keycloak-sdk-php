@@ -39,6 +39,17 @@ final class AdminClient
             ->build());
     }
 
+    /**
+     * ⚠️ fschmtt 클라이언트는 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     * 그 객체는 내보이지 않는다 — 필요하면 `raw()` 로 꺼낸다.
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return ['realm' => $this->realm];
+    }
+
     public function users(): UsersResource
     {
         return new UsersResource($this->kc, $this->realm);

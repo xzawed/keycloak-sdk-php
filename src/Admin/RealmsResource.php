@@ -13,6 +13,16 @@ final class RealmsResource
 {
     public function __construct(private readonly Keycloak $kc) {}
 
+    /**
+     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     *
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return [];
+    }
+
     public function get(string $realm): Realm
     {
         return ErrorTranslation::call(fn (): Realm => $this->kc->realms()->get($realm));
