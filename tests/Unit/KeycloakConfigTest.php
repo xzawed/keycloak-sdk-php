@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Xzawed\Keycloak\Tests\Unit;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
@@ -71,5 +72,67 @@ final class KeycloakConfigTest extends TestCase
         $c = new KeycloakConfig(serverUrl: 'http://kc:8080', realm: 'r', clientId: 'c', clientSecret: 'super-secret');
         self::assertStringNotContainsString('super-secret', (string) $c);
         self::assertStringContainsString('***', (string) $c);
+    }
+    /**
+     * expectExceptionMessage 는 부분 일치라, 앵커로 메시지 전체를 고정한다.
+     *
+     * @return iterable<string, array{float}>
+     */
+    public static function rejectedTimeouts(): iterable
+    {
+        yield '0.0' => [0.0];
+        yield '-1.0' => [-1.0];
+        yield 'NAN' => [\NAN];
+        yield 'INF' => [\INF];
+    }
+    #[DataProvider('rejectedTimeouts')]
+    public function testRejectedConnectTimeoutThrows(float $connectTimeout): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        $this->expectExceptionMessageMatches('/\AconnectTimeout must be > 0\z/');
+        // 화살표 함수로 감싸 즉시 호출 — bare `new`(S1848) 없이 생성자 예외를 발생시킨다.
+        (static fn (): KeycloakConfig => new KeycloakConfig(
+            serverUrl: 'http://kc:8080',
+            realm: 'r',
+            clientId: 'c',
+            connectTimeout: $connectTimeout,
+        ))();
+    }
+    #[DataProvider('rejectedTimeouts')]
+    public function testRejectedReadTimeoutThrows(float $readTimeout): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        $this->expectExceptionMessageMatches('/\AreadTimeout must be > 0\z/');
+        (static fn (): KeycloakConfig => new KeycloakConfig(
+            serverUrl: 'http://kc:8080',
+            realm: 'r',
+            clientId: 'c',
+            readTimeout: $readTimeout,
+        ))();
+    }
+    public function testNegativeClockSkewThrows(): void
+    {
+        $this->expectException(KeycloakConfigError::class);
+        $this->expectExceptionMessageMatches('/\AclockSkew must be >= 0\z/');
+        (static fn (): KeycloakConfig => new KeycloakConfig(
+            serverUrl: 'http://kc:8080',
+            realm: 'r',
+            clientId: 'c',
+            clockSkew: -1,
+        ))();
+    }
+    public function testTimeoutAndClockSkewBoundariesConstruct(): void
+    {
+        $c = new KeycloakConfig(
+            serverUrl: 'http://kc:8080',
+            realm: 'r',
+            clientId: 'c',
+            connectTimeout: 0.001,
+            readTimeout: 0.001,
+            clockSkew: 0,
+        );
+        self::assertSame(0.001, $c->connectTimeout);
+        self::assertSame(0.001, $c->readTimeout);
+        self::assertSame(0, $c->clockSkew);
     }
 }

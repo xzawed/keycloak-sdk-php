@@ -78,6 +78,18 @@ final readonly class KeycloakConfig implements \JsonSerializable
         if ($this->jwksMinRefetchSeconds < 0) {
             throw new KeycloakConfigError('jwksMinRefetchSeconds must be >= 0');
         }
+        // 실측(3초 지연 스텁): 0.0 은 Guzzle 이 타임아웃 없이 지연 전체를 기다리고, -1.0 은 호출이
+        // 즉시 실패한다. 둘 다 쓸 수 없는 설정인데 생성이 조용히 됐다 — 유한하고 0보다 커야 한다.
+        // clockSkew 음수도 거부한다.
+        if (!is_finite($this->connectTimeout) || $this->connectTimeout <= 0.0) {
+            throw new KeycloakConfigError('connectTimeout must be > 0');
+        }
+        if (!is_finite($this->readTimeout) || $this->readTimeout <= 0.0) {
+            throw new KeycloakConfigError('readTimeout must be > 0');
+        }
+        if ($this->clockSkew < 0) {
+            throw new KeycloakConfigError('clockSkew must be >= 0');
+        }
         // 후행 슬래시 제거(엔드포인트 조립 규약)
         $this->serverUrl = rtrim($serverUrl, '/');
         $this->scopes = array_values($scopes);
