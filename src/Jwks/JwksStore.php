@@ -8,6 +8,7 @@ use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 
@@ -115,7 +116,10 @@ final class JwksStore
         try {
             $response = $this->http->sendRequest($request);
         } catch (ClientExceptionInterface $e) {
-            throw new KeycloakTransportError('JWKS fetch failed', previous: $e);
+            throw new KeycloakTransportError('JWKS fetch failed', previous: SanitizedCause::of($e));
+        } catch (\Throwable $e) {
+            // PSR-18 밖 예외도 `validate()` 를 미분류로 빠져나가지 않는다(Grok 레그 실측: 원본이 그대로 샜다).
+            throw new KeycloakTransportError('JWKS fetch failed unexpectedly', previous: SanitizedCause::of($e));
         }
         // ⚠️ 상한은 **상태와 무관하게** 건다. 200 만 겨누면 오류 응답의 거대 본문이 그대로
         // 들어온다 — 그게 수정 전의 순서였다(상태 검사 전에 전체 슬러프 + `json_decode`).

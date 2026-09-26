@@ -34,8 +34,13 @@ final readonly class TokenSet implements \JsonSerializable
         }
     }
 
-    /** @param array<string,mixed> $r OAuth 토큰 응답 */
-    public static function fromArray(array $r, ?int $now = null): self
+    /**
+     * ⚠️ `$r` 는 토큰 응답 전체다 — 아래 거부가 던지는 예외의 트레이스 #0 이 이 프레임이라, 속성이 없으면
+     * `var_dump($e)` 가 refresh/id 토큰을 원문으로 찍었다(실측 2026-09-26, access_token 이 숫자인 응답).
+     *
+     * @param array<string,mixed> $r OAuth 토큰 응답
+     */
+    public static function fromArray(#[\SensitiveParameter] array $r, ?int $now = null): self
     {
         $now ??= \time();
 

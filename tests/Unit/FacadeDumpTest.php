@@ -62,16 +62,19 @@ final class FacadeDumpTest extends TestCase
     /**
      * 알려진 누출 — `"뿌리|카나리아"` 와 등록부 항목. ⚠️ 고쳐져 더 안 새면 **여기서 지워야 통과한다**(낡은 항목 검사).
      *
-     * 예외의 `previous`(Guzzle 예외)가 트레이스에 **Guzzle 자신의 프레임 인자**를 싣는다 — SDK 가 `request()` 옵션으로
-     * 넘긴 `form_params`·`headers` 다. `#[\SensitiveParameter]` 는 제3자 프레임에 닿지 않는다(실측 2026-09-26,
-     * `zend.exception_ignore_args=0`. 운영 php.ini 는 1 이라 인자를 안 모은다).
+     * 비었다 — 전송 오류 뿌리 넷(introspect·logout 의 Guzzle 프레임 인자)은 SDK 가 하위 예외 원본 대신
+     * `SanitizedCause`(인자를 뺀 트레이스)를 달면서 닫혔다(`php-exception-trace-third-party-args`). 적대적 응답
+     * 쪽은 `MalformedTokenResponseTest` 가 잰다.
+     *
+     * @var array<string, string>
      */
-    private const KNOWN_LEAKS = [
-        'introspect transport error|ACCESS' => 'php-exception-trace-third-party-args',
-        'introspect transport error|BASIC' => 'php-exception-trace-third-party-args',
-        'logout transport error|REFRESH' => 'php-exception-trace-third-party-args',
-        'logout transport error|SECRET' => 'php-exception-trace-third-party-args',
-    ];
+    private const KNOWN_LEAKS = [];
+
+    /** @return array<string, string> 비어 있어도 표다 — 상수의 리터럴 타입(`array{}`)으로 읽으면 조회가 「항상 거짓」이 된다. */
+    private static function knownLeaks(): array
+    {
+        return self::KNOWN_LEAKS;
+    }
 
     /** @var array<string, true> */
     private static array $knownSeen = [];
@@ -276,7 +279,7 @@ final class FacadeDumpTest extends TestCase
             foreach (self::$canaries as $name => $c) {
                 if (str_contains($out, $c)) {
                     $key = strtok($path, '-[') . '|' . $name;
-                    if (array_key_exists($key, self::KNOWN_LEAKS)) {
+                    if (array_key_exists($key, self::knownLeaks())) {
                         self::$knownSeen[$key] = true;
                         continue;
                     }
@@ -321,7 +324,7 @@ final class FacadeDumpTest extends TestCase
         self::assertSame([], self::$leaks, "기본 표현이 비밀을 찍는다:\n" . implode("\n", self::$leaks));
         self::assertSame(
             [],
-            array_keys(array_diff_key(self::KNOWN_LEAKS, self::$knownSeen)),
+            array_keys(array_diff_key(self::knownLeaks(), self::$knownSeen)),
             '알려진 누출이 더 안 난다 — 고쳐졌으면 KNOWN_LEAKS 와 등록부 항목을 함께 닫아라',
         );
 

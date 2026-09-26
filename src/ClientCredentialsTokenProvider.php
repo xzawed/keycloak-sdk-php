@@ -12,6 +12,8 @@ use Psr\Http\Message\StreamFactoryInterface;
 use Xzawed\Keycloak\Token\TokenSet;
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\Exception\SanitizedCause;
+use Xzawed\Keycloak\Internal\OAuthErrorCode;
 
 final class ClientCredentialsTokenProvider implements TokenProvider
 {
@@ -65,16 +67,18 @@ final class ClientCredentialsTokenProvider implements TokenProvider
         try {
             $response = $this->http->sendRequest($request);
         } catch (NetworkExceptionInterface $e) {
-            throw new KeycloakTransportError('token endpoint unreachable', previous: $e);
+            throw new KeycloakTransportError('token endpoint unreachable', previous: SanitizedCause::of($e));
         } catch (ClientExceptionInterface $e) {
-            throw new KeycloakTransportError('token request failed', previous: $e);
+            throw new KeycloakTransportError('token request failed', previous: SanitizedCause::of($e));
+        } catch (\Throwable $e) {
+            // PSR-18 밖 예외(계약을 어긴 주입 클라이언트·미들웨어)도 미분류로 새지 않는다 — AuthClient 와 같은 수렴.
+            throw new KeycloakTransportError('token request failed unexpectedly', previous: SanitizedCause::of($e));
         }
         $json = json_decode((string) $response->getBody(), true);
         if ($response->getStatusCode() !== 200 || !is_array($json) || !isset($json['access_token'])) {
-            $oauth = null;
-            if (is_array($json) && isset($json['error']) && is_string($json['error'])) {
-                $oauth = $json['error'];
-            }
+            // ⚠️ `error` 도 응답 본문이다 — 코드 모양일 때만 공개 프로퍼티로 싣는다(`OAuthErrorCode`).
+            $oauth = OAuthErrorCode::of(is_array($json) ? ($json['error'] ?? null) : null);
+
             throw new KeycloakAuthError('client-credentials failed', oauthError: $oauth);
         }
         return TokenSet::fromArray(self::stringKeyed($json));

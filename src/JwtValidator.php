@@ -6,6 +6,7 @@ namespace Xzawed\Keycloak;
 
 use Firebase\JWT\JWK;
 use Firebase\JWT\JWT as FbJwt;
+use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\Token\ValidatedToken;
@@ -57,7 +58,9 @@ final class JwtValidator
                 // \Error/\TypeError(예: JWK::parseKey가 배열/객체 n·e를 만나 createPemFromModulusAndExponent에
                 // string 아닌 값을 넘길 때) 전부 여기로 수렴 — \Throwable 전체를 잡아야
                 // "validate()를 벗어나는 firebase/SPL/Error 예외는 없다" 경계 불변식이 유지된다.
-                throw new TokenValidationError('token verification failed: ' . $e->getMessage(), previous: $e);
+                // ⚠️ 원본을 달지 않는다 — 그 트레이스의 `JWT::decode(<원문 JWT>, …)` 인자가 토큰 전체다(실측:
+                // 위조 서명 id_token 이 exchangeCode 오류의 var_dump 에 그대로 찍혔다). firebase 메시지는 입력을 인용하지 않는다.
+                throw new TokenValidationError('token verification failed: ' . $e->getMessage(), previous: SanitizedCause::of($e));
             }
         } finally {
             FbJwt::$leeway = $prevLeeway;

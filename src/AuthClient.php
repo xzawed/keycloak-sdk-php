@@ -12,7 +12,9 @@ use League\OAuth2\Client\Token\AccessToken;
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakException;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Exception\TokenValidationError;
+use Xzawed\Keycloak\Internal\OAuthErrorCode;
 use Xzawed\Keycloak\Internal\PkceKeycloakProvider;
 use Xzawed\Keycloak\Token\AuthorizationRequest;
 use Xzawed\Keycloak\Token\IntrospectionResult;
@@ -163,13 +165,13 @@ final class AuthClient
                 'form_params' => ['token' => $token, 'token_type_hint' => 'access_token'],
             ]);
         } catch (ConnectException $e) {
-            throw new KeycloakTransportError('introspection unreachable', previous: $e);
+            throw new KeycloakTransportError('introspection unreachable', previous: SanitizedCause::of($e));
         } catch (GuzzleException $e) {
-            throw new KeycloakAuthError('introspection failed', previous: $e);
+            throw new KeycloakAuthError('introspection failed', previous: SanitizedCause::of($e));
         } catch (KeycloakException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            throw new KeycloakTransportError('introspection failed unexpectedly', previous: $e);
+            throw new KeycloakTransportError('introspection failed unexpectedly', previous: SanitizedCause::of($e));
         }
         $json = json_decode((string) $response->getBody(), true);
         if (!is_array($json)) {
@@ -198,42 +200,50 @@ final class AuthClient
                 ],
             ]);
         } catch (ConnectException $e) {
-            throw new KeycloakTransportError('logout unreachable', previous: $e);
+            throw new KeycloakTransportError('logout unreachable', previous: SanitizedCause::of($e));
         } catch (GuzzleException $e) {
-            throw new KeycloakAuthError('logout failed', previous: $e);
+            throw new KeycloakAuthError('logout failed', previous: SanitizedCause::of($e));
         } catch (KeycloakException $e) {
             throw $e;
         } catch (\Throwable $e) {
-            throw new KeycloakTransportError('logout failed unexpectedly', previous: $e);
+            throw new KeycloakTransportError('logout failed unexpectedly', previous: SanitizedCause::of($e));
         }
     }
 
-    /** @param array<string,mixed> $options */
-    private function getAccessToken(string $grant, array $options = []): AccessToken
+    /**
+     * ⚠️ `$options` 는 refresh_token·authorization code 를 쥔다 — 이 프레임이 SDK 예외 트레이스의 #0 이다.
+     * ⚠️ 하위 예외는 원본이 아니라 `SanitizedCause` 사본으로 단다(그 클래스의 docblock).
+     *
+     * @param array<string,mixed> $options
+     */
+    private function getAccessToken(string $grant, #[\SensitiveParameter] array $options = []): AccessToken
     {
         try {
             $token = $this->provider->getAccessToken($grant, $options);
         } catch (IdentityProviderException $e) {
             $body = $e->getResponseBody();
-            $oauth = is_array($body) && isset($body['error']) ? self::toStr($body['error']) : null;
+            // ⚠️ league 의 메시지는 `error: error_description` 이다 — 설명은 응답 본문이라 IdP 가 토큰을 되울리면
+            // 그대로 찍혔다(실측). 메시지에는 OAuth `error` 코드만 싣고(`oauthError` 와 같은 값), 그 코드도 코드
+            // 모양일 때만 받는다 — `error` 자리에 토큰을 실어 보내면 공개 프로퍼티째 찍혔다(Grok 레그 실측).
+            $oauth = OAuthErrorCode::of(is_array($body) ? ($body['error'] ?? null) : null);
 
-            throw new KeycloakAuthError('token request rejected: ' . $e->getMessage(), oauthError: $oauth, previous: $e);
+            throw new KeycloakAuthError('token request rejected' . ($oauth === null ? '' : ': ' . $oauth), oauthError: $oauth, previous: SanitizedCause::of($e));
         } catch (ConnectException $e) {
-            throw new KeycloakTransportError('token endpoint unreachable', previous: $e);
+            throw new KeycloakTransportError('token endpoint unreachable', previous: SanitizedCause::of($e));
         } catch (GuzzleException $e) {
-            throw new KeycloakTransportError('token request failed', previous: $e);
+            throw new KeycloakTransportError('token request failed', previous: SanitizedCause::of($e));
         } catch (\UnexpectedValueException $e) {
             // league는 토큰 엔드포인트가 비-JSON/파싱불가 응답을 줄 때 SPL \UnexpectedValueException을
             // 던진다(IdentityProviderException이 아님 — OAuth 에러 바디가 아니라 응답 자체가 깨진 경우).
             // JwksStore가 동일 상황(비-JSON 응답)을 KeycloakTransportError로 매핑하는 것과 동형.
-            throw new KeycloakTransportError('token endpoint returned unexpected response', previous: $e);
+            throw new KeycloakTransportError('token endpoint returned unexpected response', previous: SanitizedCause::of($e));
         } catch (\Throwable $e) {
             // league/oauth2-client 및 그 하위 의존성이 던질 수 있는 그 밖의 미분류 예외까지 전부
             // 여기로 수렴시켜 "getAccessToken을 벗어나는 미분류 하위 예외는 없다" 경계를 보장한다.
             // (KeycloakException pass-through 분기는 넣지 않는다 — $this->provider->getAccessToken()은
             // league의 완전히 타입드된 메서드라 PHPStan이 우리 자신의 예외가 여기서 절대 던져지지 않음을
             // 증명하므로 그 분기는 도달불가 dead catch로 확정 보고된다: catch.neverThrown.)
-            throw new KeycloakTransportError('token request failed', previous: $e);
+            throw new KeycloakTransportError('token request failed', previous: SanitizedCause::of($e));
         }
         if (!$token instanceof AccessToken) {
             throw new KeycloakAuthError('unexpected access token implementation');
@@ -242,19 +252,46 @@ final class AuthClient
         return $token;
     }
 
-    private function toTokenSet(AccessToken $t): TokenSet
+    /**
+     * ⚠️ league 는 `access_token`·`refresh_token` 의 **존재**만 보고(`empty`) 타입은 안 본다 — 숫자·객체가 그대로
+     * 실려 `strict_types` 의 `\TypeError` 가 공개 API 로 샜고, 그 트레이스 인자(`$t`)가 토큰 응답 전체를 쥐었다
+     * (실측 2026-09-26). `expires_in` 이 소수면 만료 시각도 float 이라 같은 길로 샜다. `TokenSet::fromArray` 와
+     * 같은 규칙으로 좁힌다 — access_token 은 강제변환하지 않는다(#481).
+     */
+    private function toTokenSet(#[\SensitiveParameter] AccessToken $t): TokenSet
     {
         $values = self::stringKeyed($t->getValues());
+        $access = self::usableToken($t->getToken());
+        if ($access === null) {
+            throw new KeycloakAuthError('token response has no usable access_token');
+        }
+        $refresh = $t->getRefreshToken();
+        $expires = self::toIntOrNull($t->getExpires());
 
         return new TokenSet(
-            accessToken: $t->getToken(),
+            accessToken: $access,
             tokenType: isset($values['token_type']) ? self::toStr($values['token_type']) : 'Bearer',
-            expiresIn: $t->getExpires() !== null ? max(0, $t->getExpires() - \time()) : 0,
-            refreshToken: $t->getRefreshToken(),
+            expiresIn: $expires !== null ? max(0, $expires - \time()) : 0,
+            refreshToken: $refresh === null ? null : self::toStr($refresh),
             idToken: isset($values['id_token']) ? self::toStr($values['id_token']) : null,
             scope: isset($values['scope']) ? self::toStr($values['scope']) : null,
-            expiresAt: $t->getExpires(),
+            expiresAt: $expires,
         );
+    }
+
+    /** 비어 있지 않은 문자열만 — `toStr` 처럼 숫자를 문자열로 바꾸지 않는다(쓸 수 없는 토큰이 된다). */
+    private static function usableToken(#[\SensitiveParameter] mixed $v): ?string
+    {
+        return \is_string($v) && $v !== '' ? $v : null;
+    }
+
+    private static function toIntOrNull(mixed $v): ?int
+    {
+        return match (true) {
+            \is_int($v) => $v,
+            \is_float($v) => (int) $v,
+            default => null,
+        };
     }
 
     /** mixed 값을 문자열로 안전하게 좁힌다(신뢰된 OAuth 응답의 스칼라 값만 통과). */
