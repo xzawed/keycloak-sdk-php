@@ -4,7 +4,7 @@ An idiomatic PHP SDK for [Keycloak](https://www.keycloak.org/) covering both OID
 
 Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · PHP · Rust · Ruby · Kotlin) — one API shape, nine idioms: [github.com/xzawed/KeyCloakSDK](https://github.com/xzawed/KeyCloakSDK).
 
-> **`1.0.0` is on Packagist** — `composer require xzawed/keycloak-sdk` resolves `1.0.0` under Composer's default `minimum-stability: stable`.
+> **`1.1.0` is on Packagist** — `composer require xzawed/keycloak-sdk` resolves `1.1.0` under Composer's default `minimum-stability: stable`. A minor release: `createAuthorizationRequest()` and `exchangeCode()` now take an optional per-call `redirectUri`. The rest is security and correctness fixes — `var_dump`/`print_r` of the client, auth and admin facades no longer print the client secret or an in-flight PKCE verifier, secrets passed as arguments no longer appear in stack traces, a token whose expiry is unknown is treated as expired (the cache used to reuse a dead token forever), JWKS responses are size-capped, an empty `200` key set no longer replaces a good cached one, and failed fetches back off. ⚠️ **A timeout of `0` (an unbounded wait until now) or below, or a negative clock skew, now throws `KeycloakConfigError` when the config is built.**
 >
 > ⚠️ **Coming from `0.1.0`? `roles()->update()` changed signature.** It takes the current name as its first argument — `update(string $name, Role $role)` — because the old one-argument form **could not express a rename at all**. See [Upgrading from `0.1.0`](https://github.com/xzawed/KeyCloakSDK/blob/main/php/README.md#upgrading-from-010).
 
