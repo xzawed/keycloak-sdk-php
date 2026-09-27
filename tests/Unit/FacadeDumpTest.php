@@ -164,10 +164,11 @@ final class FacadeDumpTest extends TestCase
 
     /**
      * 공개 API 로 뿌리를 만들고, 그 과정이 흘려 넣은 비밀 전부를 카나리아로 남긴다.
+     * `HostilePathMatrixTest` 가 같은 뿌리에서 선언 집합을 파생한다 — 뿌리를 더하면 행렬도 따라 넓어진다.
      *
      * @return array<string, object>
      */
-    private function roots(): array
+    public static function roots(): array
     {
         $key = self::rsaKey();
         $http = self::idp($key['jwk']);
@@ -231,12 +232,18 @@ final class FacadeDumpTest extends TestCase
         return str_starts_with($o::class, 'Xzawed\\Keycloak\\');
     }
 
-    /** @param \SplObjectStorage<object, mixed> $seen */
-    private function walk(mixed $v, string $path, \SplObjectStorage $seen): void
+    /**
+     * 걷기 — 뿌리에서 리플렉션으로 닿는 이 SDK 의 객체마다 `$visit(객체, 경로)` 를 부른다(방문 뒤 그 프로퍼티로 내려간다).
+     * ⚠️ `HostilePathMatrixTest` 가 **이 걷기**로 선언 집합과 수신자를 얻는다 — 두 번째 걷기를 만들지 않는다.
+     *
+     * @param \SplObjectStorage<object, mixed> $seen
+     * @param \Closure(object, string): void $visit
+     */
+    public static function reach(mixed $v, string $path, \SplObjectStorage $seen, \Closure $visit): void
     {
         if (is_array($v)) {
             foreach ($v as $k => $x) {
-                $this->walk($x, $path . '[' . $k . ']', $seen);
+                self::reach($x, $path . '[' . $k . ']', $seen, $visit);
             }
             return;
         }
@@ -247,22 +254,30 @@ final class FacadeDumpTest extends TestCase
         if (!self::isOwn($v)) {
             return;
         }
-        for ($c = new \ReflectionClass($v); $c !== false; $c = $c->getParentClass()) {
-            self::$visited[$c->getName()] = true;
-        }
-        $this->render($v, $path);
+        $visit($v, $path);
         // 부모의 private 까지 — ReflectionObject 는 자기 클래스의 private 만 준다.
         for ($c = new \ReflectionClass($v); $c !== false; $c = $c->getParentClass()) {
             foreach ($c->getProperties() as $p) {
                 if ($p->isStatic() || $p->getDeclaringClass()->getName() !== $c->getName() || !$p->isInitialized($v)) {
                     continue;
                 }
-                $this->walk($p->getValue($v), $path . '->' . $p->getName(), $seen);
+                self::reach($p->getValue($v), $path . '->' . $p->getName(), $seen, $visit);
             }
         }
     }
 
-    private function render(object $o, string $path): void
+    /** @param \SplObjectStorage<object, mixed> $seen */
+    private static function walk(mixed $v, string $path, \SplObjectStorage $seen): void
+    {
+        self::reach($v, $path, $seen, static function (object $o, string $p): void {
+            for ($c = new \ReflectionClass($o); $c !== false; $c = $c->getParentClass()) {
+                self::$visited[$c->getName()] = true;
+            }
+            self::render($o, $p);
+        });
+    }
+
+    private static function render(object $o, string $path): void
     {
         $outs = [];
         ob_start();
@@ -316,10 +331,10 @@ final class FacadeDumpTest extends TestCase
 
     public function testReachableObjectsDoNotDumpSecrets(): void
     {
-        $roots = $this->roots();
+        $roots = self::roots();
         $seen = new \SplObjectStorage();
         foreach ($roots as $name => $obj) {
-            $this->walk($obj, $name, $seen);
+            self::walk($obj, $name, $seen);
         }
         self::assertSame([], self::$leaks, "기본 표현이 비밀을 찍는다:\n" . implode("\n", self::$leaks));
         self::assertSame(
