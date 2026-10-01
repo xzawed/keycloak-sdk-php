@@ -6,6 +6,7 @@ namespace Xzawed\Keycloak;
 
 use Firebase\JWT\JWK;
 use Firebase\JWT\JWT as FbJwt;
+use Xzawed\Keycloak\Exception\KeycloakConfigError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 use Xzawed\Keycloak\Jwks\JwksStore;
@@ -24,7 +25,40 @@ final class JwtValidator
         private readonly JwksStore $jwks,
     ) {}
 
+    /**
+     * 액세스 토큰 검증 — 기대 aud 는 `expectedAudience`(설정 시), 미설정이면 `clientId`.
+     */
     public function validate(#[\SensitiveParameter] string $jwt): ValidatedToken
+    {
+        return $this->verify($jwt, $this->config->expectedAudience ?? $this->config->clientId);
+    }
+
+    /**
+     * id_token 검증 — aud 는 `$clientId` 를 담아야 한다(OIDC Core §2·§3.1.3.7: id_token 의 aud 는 그것을 요청한
+     * 클라이언트다). `expectedAudience` 는 **보지 않는다** — 그것은 액세스 토큰의 리소스 서버 제한이다(RFC 9700
+     * §2.3). 나머지(alg 핀·kid·서명·exp 필수·클록 스큐·iss)는 validate() 와 같은 경로이고 JWKS 저장소도 같은 것이다.
+     * nonce 대조는 호출자 몫이다 — `AuthClient::exchangeCode()` 가 이것을 부르고 대조한다.
+     *
+     * @throws KeycloakConfigError  `$clientId` 가 비었을 때
+     * @throws TokenValidationError 검증 실패
+     */
+    public function validateIdToken(#[\SensitiveParameter] string $idToken, string $clientId): ValidatedToken
+    {
+        if (trim($clientId) === '') {
+            // 빈 기대값은 aud [""] 인 토큰을 통과시킨다 — 비교를 무력화하는 입력은 거부한다.
+            throw new KeycloakConfigError('clientId is required');
+        }
+
+        return $this->verify($idToken, $clientId);
+    }
+
+    /**
+     * 검증 본문 — 두 공개 진입점은 기대 aud 만 다르다.
+     *
+     * ⚠️ `#[\SensitiveParameter]` 를 떼지 말 것 — 이 프레임은 원문 JWT 를 인자로 쥐고, 여기서 난 예외의 트레이스가 그것을
+     * 찍는다(`zend.exception_ignore_args=0` · `CodeExchangeIT::assertLeaksNothing`).
+     */
+    private function verify(#[\SensitiveParameter] string $jwt, string $expectedAud): ValidatedToken
     {
         // (1) 헤더 사전 게이트 — firebase 디코드 이전에 우리가 직접 첫 세그먼트를 파싱해 alg를
         // RS256로 핀하고 none/미서명/다른 alg를 즉시 거부한다. firebase의 &$headers out-param은
@@ -76,8 +110,6 @@ final class JwtValidator
             throw new TokenValidationError(sprintf('issuer mismatch: %s', $iss));
         }
         $aud = $this->normalizeAudience($claims['aud'] ?? null);
-        // 기대 aud는 expectedAudience(설정 시) — 미설정이면 종전대로 clientId.
-        $expectedAud = $this->config->expectedAudience ?? $this->config->clientId;
         if (!in_array($expectedAud, $aud, true)) {
             throw new TokenValidationError(sprintf('audience does not contain %s', $expectedAud));
         }

@@ -7,10 +7,12 @@ namespace Xzawed\Keycloak\Tests\Unit;
 use Firebase\JWT\JWT as FbJwt;
 use GuzzleHttp\Psr7\HttpFactory;
 use GuzzleHttp\Psr7\Response;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
+use Xzawed\Keycloak\Exception\KeycloakConfigError;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\JwtValidator;
@@ -76,6 +78,43 @@ final class JwtValidatorTest extends TestCase
         return FbJwt::encode($claims, $this->key['priv'], $alg, $kid);
     }
 
+    /** @param array<string,mixed> $claims */
+    private function signAs(string $signer, array $claims, ?string $kid): string
+    {
+        $b64 = static fn (string $s): string => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+
+        return match ($signer) {
+            'rs256' => $this->sign($claims, kid: $kid),
+            'none' => $b64(json_encode(['alg' => 'none', 'typ' => 'JWT', 'kid' => $kid], JSON_THROW_ON_ERROR)) . '.'
+                . $b64(json_encode($claims, JSON_THROW_ON_ERROR)) . '.',
+            'hs256-public-key' => FbJwt::encode($claims, $this->publicPem(), 'HS256', $kid),
+            'foreign-key' => FbJwt::encode($claims, self::otherPrivateKey(), 'RS256', $kid),
+            default => throw new \LogicException("unknown signer {$signer}"),
+        };
+    }
+
+    private function publicPem(): string
+    {
+        $privateKey = openssl_pkey_get_private($this->key['priv']);
+        self::assertNotFalse($privateKey);
+        $details = openssl_pkey_get_details($privateKey);
+        self::assertIsArray($details);
+        $publicPem = $details['key'];
+        self::assertIsString($publicPem);
+
+        return $publicPem;
+    }
+
+    private static function otherPrivateKey(): string
+    {
+        $other = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA]);
+        self::assertNotFalse($other);
+        self::assertTrue(openssl_pkey_export($other, $otherPriv));
+        self::assertIsString($otherPriv);
+
+        return $otherPriv;
+    }
+
     /** @return array<string,mixed> */
     private function goodClaims(): array
     {
@@ -137,6 +176,117 @@ final class JwtValidatorTest extends TestCase
 
         $this->expectException(TokenValidationError::class);
         $this->validator('my-api')->validate($this->sign($this->goodClaims()));
+    }
+
+    // ── validateIdToken — id_token 의 aud 는 client id 다(OIDC Core §2·§3.1.3.7). expectedAudience 는 보지 않는다 ──
+
+    public function testValidateIdTokenChecksTheClientIdNotTheExpectedAudience(): void
+    {
+        $v = $this->validator('my-api');
+        $vt = $v->validateIdToken($this->sign($this->goodClaims()), 'it-client');   // aud [it-client, account]
+        self::assertSame(['it-client', 'account'], $vt->audience);
+
+        $c = $this->goodClaims();
+        $c['aud'] = ['my-api'];   // 재정의 값만 — 액세스 토큰이라면 통과했을 aud
+        $this->expectException(TokenValidationError::class);
+        $this->expectExceptionMessage('audience does not contain it-client');
+        $v->validateIdToken($this->sign($c), 'it-client');
+    }
+
+    /** 대조는 넘겨받은 client id 다 — 교환을 한 클라이언트(`AuthClient` 의 설정)가 그 값을 준다. */
+    public function testValidateIdTokenChecksTheClientIdItIsGiven(): void
+    {
+        $c = $this->goodClaims();
+        $c['aud'] = 'web-client';
+        self::assertSame(['web-client'], $this->validator()->validateIdToken($this->sign($c), 'web-client')->audience);
+
+        $this->expectException(TokenValidationError::class);
+        $this->expectExceptionMessage('audience does not contain web-client');
+        $this->validator()->validateIdToken($this->sign($this->goodClaims()), 'web-client');
+    }
+
+    public function testValidateIdTokenRefusesAnEmptyClientId(): void
+    {
+        $c = $this->goodClaims();
+        $c['aud'] = [''];
+        $this->expectException(KeycloakConfigError::class);
+        $this->validator()->validateIdToken($this->sign($c), ' ');
+    }
+
+    /**
+     * aud 만 바뀐다 — 나머지 검사는 validate() 와 같은 경로다.
+     *
+     * @return iterable<string, array{array<string,mixed>, string, ?string, non-empty-string}>
+     */
+    public static function idTokenDefects(): iterable
+    {
+        // [바꿀 클레임(null 은 제거 · exp 는 지금부터의 초), 서명 방식, kid, 거부 메시지 접두]
+        yield 'a foreign issuer' => [['iss' => 'http://evil/realms/it-realm'], 'rs256', 'test-kid', 'issuer mismatch'];
+        yield 'expired beyond the skew' => [['exp' => -60], 'rs256', 'test-kid', 'token verification failed: Expired token'];
+        yield 'no exp' => [['exp' => null], 'rs256', 'test-kid', 'exp claim is required'];
+        yield 'alg none' => [[], 'none', 'test-kid', 'algorithm not allowed: none'];
+        yield 'HS256 forged with the RSA public key' => [[], 'hs256-public-key', 'test-kid', 'algorithm not allowed: HS256'];
+        yield 'no kid' => [[], 'rs256', null, 'missing kid'];
+        yield 'a key outside the JWKS' => [[], 'foreign-key', 'test-kid', 'token verification failed: Signature verification failed'];
+    }
+
+    /** @param array<string,mixed> $changes */
+    #[DataProvider('idTokenDefects')]
+    public function testValidateIdTokenKeepsEveryOtherCheck(array $changes, string $signer, ?string $kid, string $message): void
+    {
+        $claims = $this->goodClaims();
+        foreach ($changes as $name => $value) {
+            if ($value === null) {
+                unset($claims[$name]);
+            } else {
+                $claims[$name] = $name === 'exp' && \is_int($value) ? time() + $value : $value;
+            }
+        }
+        $this->expectException(TokenValidationError::class);
+        $this->expectExceptionMessage($message);
+        $this->validator('my-api')->validateIdToken($this->signAs($signer, $claims, $kid), 'it-client');
+    }
+
+    public function testValidateIdTokenAllowsTheClockSkew(): void
+    {
+        $within = $this->goodClaims();
+        $within['exp'] = time() - 10;   // 스큐 30초 안 — 위 「expired beyond the skew」와 쌍
+        self::assertSame('s1', $this->validator('my-api')->validateIdToken($this->sign($within), 'it-client')->subject);
+    }
+
+    /**
+     * id_token 과 액세스 토큰이 **한** JwksStore 를 쓴다 — 캐시·재조회 게이트·백오프가 하나다.
+     * 대조군이 같은 http 위에 저장소를 하나 더 세워, 둘째 저장소라면 이 카운터가 셈을 보인다.
+     */
+    public function testValidateIdTokenAndValidateShareOneKeyStore(): void
+    {
+        $cfg = new KeycloakConfig(serverUrl: 'https://kc:8080', realm: 'it-realm', clientId: 'it-client', expectedAudience: 'my-api');
+        $jwk = $this->key['jwk'];
+        $http = new class ($jwk) implements ClientInterface {
+            public int $hits = 0;
+
+            /** @param array<string,mixed> $jwk */
+            public function __construct(private array $jwk) {}
+
+            public function sendRequest(RequestInterface $r): ResponseInterface
+            {
+                ++$this->hits;
+
+                return new Response(200, [], json_encode(['keys' => [$this->jwk]], JSON_THROW_ON_ERROR));
+            }
+        };
+        $endpoints = new OidcEndpoints($cfg);
+        $v = new JwtValidator($cfg, $endpoints, new JwksStore($endpoints->jwks(), $http, new HttpFactory()));
+        $access = $this->goodClaims();
+        $access['aud'] = ['my-api'];
+
+        $v->validateIdToken($this->sign($this->goodClaims()), 'it-client');
+        self::assertSame(1, $http->hits);
+        $v->validate($this->sign($access));
+        self::assertSame(1, $http->hits, 'validate() must reuse the key store validateIdToken() warmed');
+
+        (new JwtValidator($cfg, $endpoints, new JwksStore($endpoints->jwks(), $http, new HttpFactory())))->validate($this->sign($access));
+        self::assertSame(2, $http->hits, 'a second key store fetches again, and this counter sees it');
     }
 
     public function testRejectsExpired(): void

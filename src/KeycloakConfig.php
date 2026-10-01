@@ -58,7 +58,8 @@ final readonly class KeycloakConfig implements \JsonSerializable
         /**
          * 토큰 aud에 들어있어야 할 값(기본 null = clientId). 기본 realm은 client-credentials 토큰의
          * aud에 clientId를 넣지 않으므로, realm이 실제로 발급하는 리소스/오디언스를 지정하거나
-         * Keycloak 클라이언트에 audience 매퍼를 추가한다.
+         * Keycloak 클라이언트에 audience 매퍼를 추가한다. 액세스 토큰(`validate()`)에만 걸린다 —
+         * `exchangeCode()` 의 id_token aud 는 언제나 clientId 로 대조한다(OIDC Core §3.1.3.7).
          */
         public ?string $expectedAudience = null,
     ) {

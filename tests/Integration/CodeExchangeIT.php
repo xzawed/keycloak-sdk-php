@@ -40,6 +40,8 @@ final class CodeExchangeIT extends TestCase
     private const USERNAME = 'alice';
     private const PASSWORD = 'alice-password';
     private const UNEXPECTED_NONCE = 'authorization code exchange failed: unexpected nonce';
+    /** 리소스 서버로 재정의하는 audience — realm 의 다른 클라이언트다. */
+    private const RESOURCE_SERVER = 'it-client';
     /** 이름을 모르는 토큰까지 — 거부 경로가 id_token 을 사슬에 달면 테스트는 그 값을 손에 넣지 못한다. */
     private const JWT = '/eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\./';
 
@@ -104,6 +106,39 @@ final class CodeExchangeIT extends TestCase
             'client_secret' => self::WEB_CLIENT_SECRETS['it-web'],
         ]);
         self::assertFalse($auth->introspect($refreshed->accessToken)->active);
+    }
+
+    /**
+     * `expectedAudience` 를 리소스 서버로 재정의해도 nonce 교환은 통과한다 — id_token 의 aud 는 client id 로 대조된다
+     * (OIDC Core §2·§3.1.3.7). 재정의는 액세스 토큰의 것이라(RFC 9700 §2.3) 같은 클라이언트의 validate() 는 그것을 계속 쓴다.
+     * 예전에는 교환이 `invalid id_token: audience does not contain it-client` 로 거부됐다.
+     */
+    public function testExchangeCodeWithTheNonceSucceedsUnderAnExpectedAudienceOverride(): void
+    {
+        [$request, $code] = self::login();
+        $auth = self::web(expectedAudience: self::RESOURCE_SERVER)->auth();
+        $tokens = $auth->exchangeCode($code, $request->codeVerifier, $request->nonce, self::REDIRECT_URI);
+        self::assertNotNull($tokens->idToken);
+        // 전제: 서버의 id_token aud 에 재정의 값이 없다(아니면 아래 통과는 옛 동작으로도 초록이다). realm 의
+        // `it-web-audience` 매퍼는 access 에만 실린다(`id.token.claim=false`) — 실측: 두 토큰 다 aud 가 "it-web" 하나다.
+        self::assertNotContains(self::RESOURCE_SERVER, self::unverifiedAudience($tokens->idToken));
+        try {
+            $auth->validate($tokens->accessToken);
+            self::fail('validate() must keep checking access tokens against the override');
+        } catch (TokenValidationError $refused) {
+        }
+        self::assertSame('audience does not contain ' . self::RESOURCE_SERVER, $refused->getMessage());
+
+        // 재정의 아래서도 교환은 id_token 을 끝까지 검증한다 — aud 를 지나 nonce 대조에서 거부된다.
+        [$request, $code] = self::login();
+        try {
+            self::web(expectedAudience: self::RESOURCE_SERVER)->auth()
+                ->exchangeCode($code, $request->codeVerifier, 'x' . $request->nonce, self::REDIRECT_URI);
+            self::fail('a nonce the server did not sign must be refused under an audience override too');
+        } catch (KeycloakAuthError $wrongNonce) {
+        }
+        self::assertSame(self::UNEXPECTED_NONCE, $wrongNonce->getMessage());
+        self::assertLeaksNothing($wrongNonce, self::inputs($request, $code, 'it-web'));
     }
 
     public function testExchangeCodeRefusesANonceTheServerDidNotSign(): void
@@ -268,8 +303,12 @@ final class CodeExchangeIT extends TestCase
      * @param list<string> $algorithms
      * @param list<string> $scopes
      */
-    private static function web(string $clientId = 'it-web', array $algorithms = ['RS256'], array $scopes = ['openid']): KeycloakClient
-    {
+    private static function web(
+        string $clientId = 'it-web',
+        array $algorithms = ['RS256'],
+        array $scopes = ['openid'],
+        ?string $expectedAudience = null,
+    ): KeycloakClient {
         return KeycloakClient::create(new KeycloakConfig(
             serverUrl: self::$baseUrl,
             realm: 'it-realm',
@@ -277,7 +316,24 @@ final class CodeExchangeIT extends TestCase
             clientSecret: self::WEB_CLIENT_SECRETS[$clientId],
             scopes: $scopes,
             signatureAlgorithms: $algorithms,
+            expectedAudience: $expectedAudience,
         ));
+    }
+
+    /**
+     * 서명을 보지 않고 읽은 aud — 테스트의 **전제**를 재는 데만 쓴다(검증은 SDK 가 한다).
+     *
+     * @return list<string>
+     */
+    private static function unverifiedAudience(string $jwt): array
+    {
+        $segment = base64_decode(strtr(explode('.', $jwt)[1] ?? '', '-_', '+/'), true);
+        self::assertIsString($segment);
+        $payload = json_decode($segment, true);
+        self::assertIsArray($payload);
+        $aud = $payload['aud'] ?? [];
+
+        return array_values(array_filter(\is_array($aud) ? $aud : [$aud], 'is_string'));
     }
 
     /**

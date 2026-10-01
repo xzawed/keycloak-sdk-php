@@ -83,8 +83,9 @@ final class AuthClient
      *
      * `$expectedNonce`가 주어지면(createAuthorizationRequest()가 돌려준 nonce) 응답 id_token을
      * JwtValidator로 서명·iss·aud·exp까지 검증한 뒤 nonce 클레임을 대조한다 — OIDC nonce 재생
-     * 방지. 불일치·부재·검증실패는 모두 거부(fail-closed). null이면 id_token 검증을 건너뛴다
-     * (여덟 언어 공통 패턴 — 필수로 만들지 않는다).
+     * 방지. id_token 의 aud 는 `clientId` 로 대조한다(OIDC Core §3.1.3.7) — `expectedAudience` 는
+     * validate() 의 액세스 토큰에만 걸린다. 불일치·부재·검증실패는 모두 거부(fail-closed). null이면
+     * id_token 검증을 건너뛴다(여덟 언어 공통 패턴 — 필수로 만들지 않는다).
      */
     public function exchangeCode(
         #[\SensitiveParameter] string $code,
@@ -109,6 +110,7 @@ final class AuthClient
 
     /**
      * id_token의 nonce 클레임을 대조하기 전에 강화 JwtValidator로 서명·iss·aud·exp까지 검증한다.
+     * aud 는 토큰을 요청한 이 클라이언트의 id 다 — 액세스 토큰용 `expectedAudience` 가 아니다.
      * 거부는 자매 언어와 같이 Auth 계급(KeycloakAuthError)이다 — TokenValidationError는
      * validator가 던지고 여기서 감싼다(Ruby AuthError 동형).
      */
@@ -118,7 +120,7 @@ final class AuthClient
             throw new KeycloakAuthError('authorization code exchange failed: missing id_token for nonce validation');
         }
         try {
-            $validated = $this->validator->validate($idToken);
+            $validated = $this->validator->validateIdToken($idToken, $this->config->clientId);
         } catch (TokenValidationError $e) {
             throw new KeycloakAuthError('authorization code exchange failed: invalid id_token: ' . $e->getMessage(), previous: $e);
         }
