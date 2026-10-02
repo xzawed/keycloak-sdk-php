@@ -23,7 +23,7 @@ use Fschmtt\Keycloak\Resource\Resource as FschmttResource;
  * 그것은 fschmtt 안에 잠겨 있고, 새로 grant 를 태우면 §4 토큰 캐시 불변식이 깨진다.
  *
  * ⚠️ `CommandExecutor` 는 fschmtt 가 `@internal` 로 표시한 타입이다. 그것을 여기서 쓰는 근거는
- * `composer.json` 의 **정확 핀 `0.42.0`** 하나뿐이다 — 핀을 올릴 때 `RolesRenameTest` 가
+ * `composer.json` 의 **정확 핀 `0.43.0`** 하나뿐이다 — 핀을 올릴 때 `RolesRenameTest` 가
  * 실제 fschmtt 스택을 태워 이 조립이 아직 성립하는지 확인한다.
  *
  * @internal §4 — 이 타입은 파사드 밖으로 나가지 않는다.
