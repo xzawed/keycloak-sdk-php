@@ -89,6 +89,9 @@ final class MalformedTokenResponseTest extends TestCase
         'e 400 error_description echo' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'e2 401 error body carrying tokens' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'e3 error code carries a token' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'e4 error code ends in LF' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'e5 error code ends in CR' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'e6 error code ends in CRLF' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'f short non-JSON body' => ['introspect' => 'auth'],
         'f2 long non-JSON body' => ['introspect' => 'auth'],
         'f3 401 error_description echo' => ['introspect' => 'auth'],
@@ -123,6 +126,15 @@ final class MalformedTokenResponseTest extends TestCase
         'e3 error code carries a token|clientCredentialsToken' => ['token request rejected', null,
             'League\OAuth2\Client\Provider\Exception\IdentityProviderException: OAuth error response (body withheld)'],
         'e3 error code carries a token|provider.getToken' => ['client-credentials failed', null, null],
+        'e4 error code ends in LF|clientCredentialsToken' => ['token request rejected', null,
+            'League\OAuth2\Client\Provider\Exception\IdentityProviderException: OAuth error response (body withheld)'],
+        'e4 error code ends in LF|provider.getToken' => ['client-credentials failed', null, null],
+        'e5 error code ends in CR|clientCredentialsToken' => ['token request rejected', null,
+            'League\OAuth2\Client\Provider\Exception\IdentityProviderException: OAuth error response (body withheld)'],
+        'e5 error code ends in CR|provider.getToken' => ['client-credentials failed', null, null],
+        'e6 error code ends in CRLF|clientCredentialsToken' => ['token request rejected', null,
+            'League\OAuth2\Client\Provider\Exception\IdentityProviderException: OAuth error response (body withheld)'],
+        'e6 error code ends in CRLF|provider.getToken' => ['client-credentials failed', null, null],
         'f3 401 error_description echo|introspect' => ['introspection failed', null,
             'GuzzleHttp\Exception\ClientException: HTTP 401 from POST https://kc.test/realms/r/protocol/openid-connect/token/introspect (response body withheld)'],
         'u2 introspect handler RuntimeException|introspect' => ['introspection failed unexpectedly', null,
@@ -274,6 +286,17 @@ final class MalformedTokenResponseTest extends TestCase
             'e3 error code carries a token' => ['ep' => 'token', 'status' => 400, 'type' => $json, 'body' => $enc([
                 'error' => 'LKe3ERR-Token-In-Error-Code', 'error_description' => 'x',
             ]), 'canaries' => ['e3.ERR' => ['LKe3ERR-Token-In-Error-Code', true]]],
+            // 코드 모양 뒤에 줄바꿈 — PCRE 의 `$` 는 끝 줄바꿈 하나 앞에서도 맞아 LF 가 메시지·`oauthError`·원인에 실렸다(로그
+            // 줄이 갈린다). CR·CRLF 는 원래 걸렸다 — 「정확히 `[a-z_]{1,64}`」 계약의 대조군이다(`OAuthErrorCode`).
+            'e4 error code ends in LF' => ['ep' => 'token', 'status' => 400, 'type' => $json, 'body' => $enc([
+                'error' => "invalid_client\n", 'error_description' => 'x',
+            ]), 'canaries' => []],
+            'e5 error code ends in CR' => ['ep' => 'token', 'status' => 400, 'type' => $json, 'body' => $enc([
+                'error' => "invalid_client\r", 'error_description' => 'x',
+            ]), 'canaries' => []],
+            'e6 error code ends in CRLF' => ['ep' => 'token', 'status' => 400, 'type' => $json, 'body' => $enc([
+                'error' => "invalid_client\r\n", 'error_description' => 'x',
+            ]), 'canaries' => []],
             // (f) introspect 의 같은 모양.
             'f short non-JSON body' => ['ep' => 'introspect', 'status' => 200, 'type' => $json, 'body' => 'LKf1SHORTbody',
                 'canaries' => ['f.SHORT' => ['LKf1SHORTbody', true]]],

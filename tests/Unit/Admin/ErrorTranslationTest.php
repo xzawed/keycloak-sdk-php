@@ -124,6 +124,10 @@ final class ErrorTranslationTest extends TestCase
                 $json(['error' => 'invalid_grant', 'error_description' => 'ETecho0-description']), 'admin token request failed: HTTP 400 (invalid_grant)'],
             'token 400 · error carries a token' => [self::TOKEN_URL, 400,
                 $json(['error' => 'ETerr00-Token-In-Error-Code']), 'admin token request failed: HTTP 400'],
+            // 코드 모양 뒤의 줄바꿈 — 메시지에 실리면 로그 줄이 갈린다. CR·CRLF 는 같은 계약(정확히 `[a-z_]{1,64}`)의 대조군이다.
+            'token 400 · code ends in LF' => [self::TOKEN_URL, 400, $json(['error' => "invalid_client\n"]), 'admin token request failed: HTTP 400'],
+            'token 400 · code ends in CR' => [self::TOKEN_URL, 400, $json(['error' => "invalid_client\r"]), 'admin token request failed: HTTP 400'],
+            'token 400 · code ends in CRLF' => [self::TOKEN_URL, 400, $json(['error' => "invalid_client\r\n"]), 'admin token request failed: HTTP 400'],
             'token 401 · non-JSON body' => [self::TOKEN_URL, 401, 'ETbody0-not-json', 'admin token request failed: HTTP 401'],
             'token 400 · JSON without error' => [self::TOKEN_URL, 400, $json(['message' => 'x']), 'admin token request failed: HTTP 400'],
             'token 400 · body over 8 KiB' => [self::TOKEN_URL, 400,
