@@ -23,8 +23,12 @@ final class ClientsResource
         return ['realm' => $this->realm];
     }
 
-    /** fschmtt는 import(create 아님) — id를 세팅해야 내부 re-GET이 성립. */
-    public function import(Client $client): Client
+    /**
+     * fschmtt는 import(create 아님) — id를 세팅해야 내부 re-GET이 성립.
+     *
+     * ⚠️ 보내는 representation 은 client secret 을 쥘 수 있다 — 실패 오류의 트레이스 인자로 찍히지 않게 가린다(update 도).
+     */
+    public function import(#[\SensitiveParameter] Client $client): Client
     {
         return ErrorTranslation::call(fn (): Client => $this->kc->clients()->import($this->realm, $client));
     }
@@ -34,7 +38,8 @@ final class ClientsResource
         return ErrorTranslation::call(fn (): Client => $this->kc->clients()->get($this->realm, $clientUuid));
     }
 
-    public function all(?Criteria $criteria = null): ClientCollection
+    /** ⚠️ 검색 조건은 쿼리로 간다 — 원인 사본이 URL 의 쿼리를 빼듯 실패 오류의 트레이스 인자에서도 가린다. */
+    public function all(#[\SensitiveParameter] ?Criteria $criteria = null): ClientCollection
     {
         return ErrorTranslation::call(fn (): ClientCollection => $this->kc->clients()->all($this->realm, $criteria));
     }
@@ -50,7 +55,7 @@ final class ClientsResource
      * (§4 동형). import 는 POST+재조회(생성)라 이름을 유지하고, 여기는
      * PUT 이라 fschmtt 그대로 update 다.
      */
-    public function update(string $clientUuid, Client $client): void
+    public function update(string $clientUuid, #[\SensitiveParameter] Client $client): void
     {
         ErrorTranslation::call(fn () => $this->kc->clients()->update($this->realm, $clientUuid, $client));
     }

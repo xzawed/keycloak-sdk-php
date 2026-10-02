@@ -5,7 +5,11 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Exception;
 
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\Utils;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
+use Psr\Http\Client\NetworkExceptionInterface;
+use Psr\Http\Client\RequestExceptionInterface;
+use Psr\Http\Message\UriInterface;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
 
 /**
@@ -21,7 +25,8 @@ use Xzawed\Keycloak\Internal\OAuthErrorCode;
  * 사본이 남기는 것: 원본 클래스명(`originalClass`, 메시지 머리에도)·코드·파일·줄·**인자를 뺀** 트레이스·같은 규칙으로
  * 정화된 원인 사슬. 메시지는 셋으로 가른다 — HTTP 오류 응답은 상태·메서드·URL(쿼리·사용자정보 제외)만, OAuth 오류
  * 응답은 `error` 코드(`OAuthErrorCode` 모양일 때)만, 그 밖은 **감사한 하위 라이브러리 안에서 만든 메시지만** 옮긴다
- * (그 라이브러리들의 메시지는 입력을 인용하지 않는다). 소비자 핸들러·미들웨어처럼 그 밖에서 난 예외의 메시지는
+ * (그 라이브러리들의 메시지는 입력을 인용하지 않는다 — ⚠️ 예외 하나: Guzzle 의 전송 실패는 요청 URL 을 쿼리째 인용해
+ * `withoutQuery()` 가 같은 선으로 깎는다). 소비자 핸들러·미들웨어처럼 그 밖에서 난 예외의 메시지는
  * 무엇을 인용할지 모르므로 옮기지 않는다(Grok 레그 실측: 핸들러 예외가 인용한 시크릿이 사슬로 찍혔다).
  */
 final class SanitizedCause extends \RuntimeException
@@ -55,18 +60,22 @@ final class SanitizedCause extends \RuntimeException
         return self::copy($e, 0);
     }
 
-    private static function copy(#[\SensitiveParameter] \Throwable $e, int $depth): \Throwable
+    /** @param UriInterface|null $sent 바깥 HTTP 예외가 보낸 요청의 URL — 이 메시지가 인용할 수 있다(`withoutQuery`). */
+    private static function copy(#[\SensitiveParameter] \Throwable $e, int $depth, ?UriInterface $sent = null): \Throwable
     {
         if ($e instanceof KeycloakException || $e instanceof self) {
             return $e;
+        }
+        if ($e instanceof RequestExceptionInterface || $e instanceof NetworkExceptionInterface) {
+            $sent = $e->getRequest()->getUri();   // 이 예외와 그것이 감싼 사슬(stream 핸들러의 fopen 경고)이 인용하는 URL
         }
         $previous = $e->getPrevious();
         $code = $e->getCode();
         $copy = new self(
             $e::class,
-            self::safeMessage($e),
+            self::safeMessage($e, $sent),
             \is_int($code) ? $code : 0,
-            $previous === null || $depth >= self::MAX_DEPTH ? null : self::copy($previous, $depth + 1),
+            $previous === null || $depth >= self::MAX_DEPTH ? null : self::copy($previous, $depth + 1, $sent),
         );
         $copy->file = $e->getFile();
         $copy->line = $e->getLine();
@@ -81,7 +90,7 @@ final class SanitizedCause extends \RuntimeException
         return $copy;
     }
 
-    private static function safeMessage(\Throwable $e): string
+    private static function safeMessage(\Throwable $e, ?UriInterface $sent): string
     {
         if ($e instanceof IdentityProviderException) {
             $body = $e->getResponseBody();
@@ -99,7 +108,31 @@ final class SanitizedCause extends \RuntimeException
             }
         }
 
-        return self::fromAuditedLibrary($e) ? $e->getMessage() : '(message withheld: thrown outside the audited libraries)';
+        if (!self::fromAuditedLibrary($e)) {
+            return '(message withheld: thrown outside the audited libraries)';
+        }
+
+        return $sent === null ? $e->getMessage() : self::withoutQuery($e->getMessage(), $sent);
+    }
+
+    /**
+     * ⚠️ 감사한 라이브러리도 전송 실패에는 요청 URL 을 **쿼리째** 인용한다 — curl `cURL error 28: … for <URL>`, stream `Connection
+     * refused for URI <URL>`(실측 2026-10-02 — admin 검색의 쿼리는 소비자의 검색어·username 이다). HTTP 갈래와 같은 선으로 URL 은
+     * 남기되 쿼리·사용자정보·조각을 빼고, 다른 꼴로 인용돼(호스트를 IP 로 바꾼 URL · 디코드한 쿼리) 바꾸지 못한 쿼리가 남으면
+     * 메시지를 통째로 거둔다.
+     */
+    private static function withoutQuery(string $message, UriInterface $uri): string
+    {
+        $safe = (string) $uri->withUserInfo('')->withQuery('')->withFragment('');
+        $message = str_replace([(string) $uri, (string) Utils::redactUserInfo($uri)], $safe, $message);
+        $query = $uri->getQuery();
+        foreach ($query === '' ? [] : [$query, rawurldecode($query), urldecode($query)] as $quoted) {
+            if (str_contains($message, $quoted)) {
+                return '(message withheld: it quotes the request query)';
+            }
+        }
+
+        return $message;
     }
 
     private static function fromAuditedLibrary(\Throwable $e): bool

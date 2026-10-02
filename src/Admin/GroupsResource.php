@@ -22,7 +22,8 @@ final class GroupsResource
         return ['realm' => $this->realm];
     }
 
-    public function create(Group $group): void
+    /** ⚠️ 보내는 representation 은 가린다(update 도) — 실패 오류의 트레이스 인자로 찍히지 않게(`UsersResource::create` 와 같은 규칙). */
+    public function create(#[\SensitiveParameter] Group $group): void
     {
         ErrorTranslation::call(fn () => $this->kc->groups()->create($this->realm, $group));
     }
@@ -43,7 +44,7 @@ final class GroupsResource
     }
 
     /** void — fschmtt Groups::update 도 void. 자매 언어와 동형. */
-    public function update(string $groupId, Group $group): void
+    public function update(string $groupId, #[\SensitiveParameter] Group $group): void
     {
         ErrorTranslation::call(fn () => $this->kc->groups()->update($this->realm, $groupId, $group));
     }

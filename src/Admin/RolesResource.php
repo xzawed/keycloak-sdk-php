@@ -22,7 +22,8 @@ final class RolesResource
         return ['realm' => $this->realm];
     }
 
-    public function create(Role $role): void
+    /** ⚠️ 보내는 representation 은 가린다(update 도) — 실패 오류의 트레이스 인자로 찍히지 않게(`UsersResource::create` 와 같은 규칙). */
+    public function create(#[\SensitiveParameter] Role $role): void
     {
         ErrorTranslation::call(fn () => $this->kc->roles()->create($this->realm, $role));
     }
@@ -50,7 +51,7 @@ final class RolesResource
      * 전부 (이름, representation) 두 인자를 받으므로 §4 동형도 이쪽이 맞다. 경위와 대체 경로는
      * {@see RenamableRoles}.
      */
-    public function update(string $name, Role $role): void
+    public function update(string $name, #[\SensitiveParameter] Role $role): void
     {
         ErrorTranslation::call(
             fn () => $this->kc->resource(RenamableRoles::class)->updateByName($this->realm, $name, $role),

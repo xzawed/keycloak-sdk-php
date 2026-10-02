@@ -112,28 +112,11 @@ final class HostilePathMatrixTest extends TestCase
      * `W3<축> 행/변형 => id: 이유` 로 펼친다. SDK 를 고치지 않고 드러내 둔다. 관측되지 않는(이제 통과하거나 칸이 없는) 칸은
      * 낡은 것이라 실패한다. ⚠️ 와일드카드는 없다 — 행을 이름으로 적으므로 **새 admin 메서드의 같은 누출은 GAP 이 아니라
      * FAIL** 이다(틈에 조용히 흡수되지 않는다). **이유 없는 항목은 넣지 않는다.**
+     *
+     * 오늘은 비었다 — admin 26 행 × 8 변형(`php-admin-token-error-unsanitized`)은 `Admin\ErrorTranslation` 이 하위 예외를
+     * `SanitizedCause` 로 달고 메시지를 스스로 만들면서 닫혔다(요청 쪽 비밀은 `Admin/AdminFacadeErrorLeakTest` 가 잰다).
      */
-    private const KNOWN_GAP_GROUPS = [
-        'php-admin-token-error-unsanitized' => [
-            'reason' => 'admin 의 토큰 부여는 fschmtt 가 하고 Admin\\ErrorTranslation 이 그 예외를 SanitizedCause 없이 원본째 달며 '
-                . '메시지도 그대로 옮긴다 — Guzzle 의 본문 요약(d4·e·e2·e3 → getMessage)과 하위 예외의 트레이스 인자(b2·d·d2·d3 → '
-                . 'var_dump·print_r·(string))가 토큰 응답을 찍는다. #622 는 AuthClient·provider 에만 적용됐다.',
-            'axis' => 'a',
-            'rows' => [
-                'Admin\\ClientsResource::all', 'Admin\\ClientsResource::delete', 'Admin\\ClientsResource::get',
-                'Admin\\ClientsResource::import', 'Admin\\ClientsResource::update',
-                'Admin\\GroupsResource::all', 'Admin\\GroupsResource::create', 'Admin\\GroupsResource::delete',
-                'Admin\\GroupsResource::get', 'Admin\\GroupsResource::update',
-                'Admin\\RealmsResource::all', 'Admin\\RealmsResource::delete', 'Admin\\RealmsResource::get',
-                'Admin\\RealmsResource::import', 'Admin\\RealmsResource::update',
-                'Admin\\RolesResource::all', 'Admin\\RolesResource::create', 'Admin\\RolesResource::delete',
-                'Admin\\RolesResource::get', 'Admin\\RolesResource::update',
-                'Admin\\UsersResource::create', 'Admin\\UsersResource::delete', 'Admin\\UsersResource::findIdByUsername',
-                'Admin\\UsersResource::get', 'Admin\\UsersResource::search', 'Admin\\UsersResource::update',
-            ],
-            'variants' => ['b2', 'd', 'd2', 'd3', 'd4', 'e', 'e2', 'e3'],
-        ],
-    ];
+    private const KNOWN_GAP_GROUPS = [];
 
     /**
      * W1 — 손으로 고른 PHP 테스트가 겨누는 메서드. [행, 계급, 축(a·b·c·row), 앵커(`tests/Unit 아래 파일|메서드`), 앵커가 부르는 이름].
@@ -331,11 +314,21 @@ final class HostilePathMatrixTest extends TestCase
         return self::NONCE_DROP_EXEMPT;
     }
 
+    /**
+     * 비어 있어도 표다 — `nonceDropExempt()` 와 같은 이유.
+     *
+     * @return array<string, array{reason: string, axis: string, rows: list<string>, variants: list<string>}>
+     */
+    private static function knownGapGroups(): array
+    {
+        return self::KNOWN_GAP_GROUPS;
+    }
+
     /** @return array<string, string> 칸 => `등록부 id: 이유` — `KNOWN_GAP_GROUPS` 를 행 × 변형으로 펼친 것. */
     private static function knownGaps(): array
     {
         $out = [];
-        foreach (self::KNOWN_GAP_GROUPS as $id => $g) {
+        foreach (self::knownGapGroups() as $id => $g) {
             foreach ($g['rows'] as $row) {
                 foreach ($g['variants'] as $v) {
                     $out["W3{$g['axis']} $row/$v"] = "$id: {$g['reason']}";
