@@ -57,6 +57,11 @@ final class FacadeDumpTest extends TestCase
     private const EXEMPT = [
         \Xzawed\Keycloak\Admin\RenamableRoles::class => 'RolesResource::update 안에서 만들어 곧바로 버린다 — 반환·보관되지 않아 '
             . '소비자가 쥘 수 없다. 직접 만드는 길은 raw() 경유 fschmtt 표면이다(§4(b) 탈출구).',
+        \Xzawed\Keycloak\Internal\ResponseTooLarge::class => '토큰 응답 상한의 운반체 — league 스택 안(PkceKeycloakProvider)에서만 던지고 '
+            . 'SDK 경계(AuthClient::getAccessToken)가 받아 원인 없는 KeycloakTransportError 로 바꾼다. 그 프로바이더는 AuthClient 가 private 로만 '
+            . '쥐어 탈출구가 없으므로 소비자가 쥘 수 없다(TokenResponseCapTest::testABodyOneByteOverTheCapFails 가 경계 밖 예외의 타입과 원인 '
+            . '없음을 잰다). admin 레인은 raw() 가 하위 오류를 내보내므로 이것을 쓰지 않고 Guzzle RequestException 을 던진다'
+            . '(TokenResponseCapTest::testAdminRawGetsAGuzzleExceptionWhileTheFacadeKeepsItsError).',
     ];
 
     /**

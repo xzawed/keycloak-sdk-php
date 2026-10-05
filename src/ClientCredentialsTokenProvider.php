@@ -14,6 +14,7 @@ use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
+use Xzawed\Keycloak\Internal\TokenResponseCap;
 
 final class ClientCredentialsTokenProvider implements TokenProvider
 {
@@ -74,7 +75,18 @@ final class ClientCredentialsTokenProvider implements TokenProvider
             // PSR-18 밖 예외(계약을 어긴 주입 클라이언트·미들웨어)도 미분류로 새지 않는다 — AuthClient 와 같은 수렴.
             throw new KeycloakTransportError('token request failed unexpectedly', previous: SanitizedCause::of($e));
         }
-        $json = json_decode((string) $response->getBody(), true);
+        // ⚠️ 상한은 **읽기**에만 건다 — PSR-18 `sendRequest()` 에는 요청별 옵션이 없고 클라이언트는 소비자가 주입한다. 그 클라이언트가
+        // 본문을 이미 다 받아 두었어도(Guzzle 은 php://temp 에 받는다 — 2 MB 를 넘으면 임시 파일) 쥐는 메모리는 상한까지다. 전송 자체를
+        // 끊는 싱크는 `AuthClient`(league·introspect)와 admin 레인에만 있다(`TokenResponseCap`).
+        try {
+            $raw = TokenResponseCap::read($response->getBody());
+        } catch (\Throwable $e) {
+            throw new KeycloakTransportError('token response could not be read', previous: SanitizedCause::of($e));
+        }
+        if ($raw === null) {
+            throw new KeycloakTransportError(sprintf('token response exceeds %d bytes', TokenResponseCap::TOKEN_RESPONSE_MAX_BYTES));
+        }
+        $json = json_decode($raw, true);
         if ($response->getStatusCode() !== 200 || !is_array($json) || !isset($json['access_token'])) {
             // ⚠️ `error` 도 응답 본문이다 — 코드 모양일 때만 공개 프로퍼티로 싣는다(`OAuthErrorCode`).
             $oauth = OAuthErrorCode::of(is_array($json) ? ($json['error'] ?? null) : null);

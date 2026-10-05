@@ -83,6 +83,13 @@ final class HostilePathMatrixTest extends TestCase
             . '합성 인자 `[]` 는 access_token 이 없어 계약상 거부된다(TokenSetTest::testMissingAccessTokenIsRejected).',
         'Admin\\RenamableRoles::updateByName' => 'RolesResource::update 안에서 만들어 곧바로 버린다 — 소비자가 쥘 수 없어 걷기가 안 닿는다'
             . '(FacadeDumpTest::EXEMPT 와 같은 이유). 그 경로는 행 Admin\\RolesResource::update 가 TOKEN_GRANT 로 잰다.',
+        'Internal\\PkceKeycloakProvider::getResponse' => 'league 가 토큰 요청을 보내는 자리(상한 싱크를 단다) — AuthClient 의 private 프로퍼티로만 '
+            . '쥐는 프로바이더라 소비자가 부를 수 없다(INHERITED_EXEMPT 와 같은 이유). 그 교환은 AuthClient 의 TOKEN_GRANT·CODE_EXCHANGE 행이 '
+            . '잰다. 합성기는 PSR-7 요청을 만들지 못한다.',
+        'Internal\\TokenResponseCap::read' => '정적 판독기 — 인자로 받은 스트림만 읽고 HTTP 클라이언트를 쥐지 않아 요청을 낼 수 없다. '
+            . '합성기는 StreamInterface 를 만들지 못한다(Token\\TokenSet::fromArray 와 같은 부류). 동작은 TokenResponseCapTest 가 잰다.',
+        'Internal\\TokenResponseCap::overflowed' => '정적 판정기 — 인자로 받은 싱크의 크기만 본다(요청을 낼 수 없다). 합성기는 '
+            . 'StreamInterface 를 만들지 못한다. 동작은 TokenResponseCapTest 가 잰다.',
     ];
 
     /**

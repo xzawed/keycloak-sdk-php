@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Exception;
 
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\MessageTrait;
 use GuzzleHttp\Psr7\Utils;
 use League\OAuth2\Client\Provider\Exception\IdentityProviderException;
 use Psr\Http\Client\NetworkExceptionInterface;
@@ -25,9 +26,10 @@ use Xzawed\Keycloak\Internal\OAuthErrorCode;
  * 사본이 남기는 것: 원본 클래스명(`originalClass`, 메시지 머리에도)·코드·파일·줄·**인자를 뺀** 트레이스·같은 규칙으로
  * 정화된 원인 사슬. 메시지는 셋으로 가른다 — HTTP 오류 응답은 상태·메서드·URL(쿼리·사용자정보 제외)만, OAuth 오류
  * 응답은 `error` 코드(`OAuthErrorCode` 모양일 때)만, 그 밖은 **감사한 하위 라이브러리 안에서 만든 메시지만** 옮긴다
- * (그 라이브러리들의 메시지는 입력을 인용하지 않는다 — ⚠️ 예외 하나: Guzzle 의 전송 실패는 요청 URL 을 쿼리째 인용해
- * `withoutQuery()` 가 같은 선으로 깎는다). 소비자 핸들러·미들웨어처럼 그 밖에서 난 예외의 메시지는
- * 무엇을 인용할지 모르므로 옮기지 않는다(Grok 레그 실측: 핸들러 예외가 인용한 시크릿이 사슬로 찍혔다).
+ * (그 라이브러리들의 메시지는 입력을 인용하지 않는다 — ⚠️ 예외 둘: Guzzle 의 전송 실패는 요청 URL 을 쿼리째 인용해
+ * `withoutQuery()` 가 같은 선으로 깎고, psr7 의 헤더 검증은 거부한 헤더 값을 통째로 인용해 `quotesAHeader()` 가 거둔다).
+ * 소비자 핸들러·미들웨어처럼 그 밖에서 난 예외의 메시지는 무엇을 인용할지 모르므로 옮기지 않는다(Grok 레그 실측: 핸들러
+ * 예외가 인용한 시크릿이 사슬로 찍혔다).
  */
 final class SanitizedCause extends \RuntimeException
 {
@@ -45,6 +47,9 @@ final class SanitizedCause extends \RuntimeException
 
     /** @var list<string>|null */
     private static ?array $auditedRoots = null;
+
+    /** psr7 의 헤더 검증이 사는 파일(`quotesAHeader`). */
+    private static ?string $headerValidation = null;
 
     /** @param class-string $originalClass */
     private function __construct(public readonly string $originalClass, string $message, int $code, ?\Throwable $previous)
@@ -111,8 +116,25 @@ final class SanitizedCause extends \RuntimeException
         if (!self::fromAuditedLibrary($e)) {
             return '(message withheld: thrown outside the audited libraries)';
         }
+        if (self::quotesAHeader($e)) {
+            return '(message withheld: it quotes a header value)';
+        }
 
         return $sent === null ? $e->getMessage() : self::withoutQuery($e->getMessage(), $sent);
+    }
+
+    /**
+     * ⚠️ psr7 의 헤더 검증(`MessageTrait` — 헤더 이름·값)은 거부한 것을 **통째로** 메시지에 인용한다 — `"Bearer <토큰>" is not valid
+     * header value.` admin 의 Bearer 에 CR·LF 가 든 토큰이 이 메시지로 원인의 `getMessage()`·`(string)$e`·`var_dump`·`print_r` 에
+     * 찍혔다(실측 2026-10-05: sodium 확장이 없는 PHP 에서 lcobucci 가 base64 의 공백을 건너뛰어 그 토큰을 받아들이고, fschmtt 가
+     * 그것을 Bearer 로 실으려다 터졌다 — `Admin/AdminBearerHeaderLeakTest`). 그 파일에서 난 예외는 메시지를 옮기지 않는다 — 원본
+     * 클래스명·파일·줄은 남는다. 값을 고쳐 쓰지 않는다(요청은 원래대로 나가지 않는다).
+     */
+    private static function quotesAHeader(\Throwable $e): bool
+    {
+        self::$headerValidation ??= (string) (new \ReflectionClass(MessageTrait::class))->getFileName();
+
+        return $e->getFile() === self::$headerValidation;
     }
 
     /**

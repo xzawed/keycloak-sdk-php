@@ -20,6 +20,7 @@ use Xzawed\Keycloak\Exception\KeycloakNotFoundError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
+use Xzawed\Keycloak\Internal\TokenResponseCap;
 
 /**
  * fschmtt는 Guzzle 예외를 변환하지 않으므로(404/409/403 전부 raw ClientException) 경계에서 여기로 변환한다.
@@ -36,8 +37,9 @@ final class ErrorTranslation
     /**
      * fschmtt 가 admin 토큰을 받는 자리 — `{base}/realms/{realm}` 뒤의 꼬리. ⚠️ 꼬리만으로는 못 가른다 — 경로로 가는 식별자가
      * admin REST 경로도 이것으로 끝나게 만든다(fschmtt 는 경로 값을 인코딩하지 않는다). 가르는 것은 Bearer 다(`failed()`).
+     * `AdminClient` 의 토큰 응답 상한도 같은 규칙으로 토큰 부여를 고른다.
      */
-    private const TOKEN_PATH = '/protocol/openid-connect/token';
+    public const TOKEN_PATH = '/protocol/openid-connect/token';
 
     /** OAuth 오류 응답은 작다 — 이보다 긴 본문에서는 코드를 찾지 않는다(적대적 IdP 의 큰 본문을 통째로 디코드하지 않는다). */
     private const MAX_ERROR_BODY = 8192;
@@ -68,6 +70,12 @@ final class ErrorTranslation
         } catch (ConnectException $e) {
             throw new KeycloakTransportError('admin request unreachable', previous: SanitizedCause::of($e));
         } catch (RequestException $e) {
+            if (TokenResponseCap::isRejection($e)) {
+                // admin 의 토큰 응답이 상한을 넘었다(`AdminClient` 의 미들웨어) — 토큰 부여에서 끝나 admin REST 요청은 나가지 않았다.
+                // 메시지는 그 미들웨어가 만든 상한 문구다. ⚠️ 원인을 달지 않는다 — 그 예외의 트레이스는 Guzzle `request()` 의
+                // `form_params`(client_secret) 프레임 인자를 쥔다.
+                throw new KeycloakTransportError($e->getMessage());
+            }
             throw new KeycloakTransportError('admin request failed', previous: SanitizedCause::of($e));
         } catch (BuilderException $e) {
             // fschmtt Builder 의 고정 문구 둘(`Base URL is not set`·`Grant type is not set`) — 네트워크 앞이라 응답·토큰이 없다.
