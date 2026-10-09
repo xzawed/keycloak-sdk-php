@@ -7,12 +7,15 @@ namespace Xzawed\Keycloak\Tests\Unit\Jwks;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
-use Psr\Http\Message\{RequestInterface, ResponseInterface};
-use GuzzleHttp\Psr7\{HttpFactory, Response};
+use Psr\Http\Message\{RequestInterface, ResponseInterface, StreamInterface};
+use GuzzleHttp\Psr7\{FnStream, HttpFactory, Response, Utils};
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Jwks\FailureBackoff;
 use Xzawed\Keycloak\Jwks\JwksStore;
+use Xzawed\Keycloak\JwtValidator;
+use Xzawed\Keycloak\OidcEndpoints;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
+use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 
 /** 프로브가 IdP 도달 횟수를 **메서드로** 읽게 하는 이음매(참조 카운터를 쓰면 phpstan 이 좁힌다). */
@@ -223,6 +226,189 @@ final class JwksStoreTest extends TestCase
             $produced,
             'read must abort at the cap, not after slurping the whole stream',
         );
+    }
+
+    /** 주어진 본문 하나를 200 으로 돌려주는 클라이언트. */
+    private static function serving(StreamInterface $body): ClientInterface
+    {
+        return new class ($body) implements ClientInterface {
+            public function __construct(private readonly StreamInterface $body) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return new Response(200, ['Content-Type' => 'application/json'], $this->body);
+            }
+        };
+    }
+
+    /** 조회 한 번의 결과 — 받아들였으면 `kid <kid>`, 아니면 `<예외 클래스>: <메시지>`. */
+    private static function outcome(JwksStore $store): string
+    {
+        try {
+            $kid = $store->getKeyByKid('k1')['kid'] ?? null;
+
+            return 'kid ' . (is_string($kid) ? $kid : '?');
+        } catch (\Throwable $e) {
+            return $e::class . ': ' . $e->getMessage();
+        }
+    }
+
+    /** kid `k1` 하나를 담은 JWKS 를 JSON 공백으로 `$size` 바이트에 맞춘다 — 상한 근처에서도 받아들일 수 있는 문서다. */
+    private static function document(int $size): string
+    {
+        $doc = '{"keys":[{"kid":"k1","kty":"RSA"}]}';
+
+        return $doc . str_repeat(' ', $size - strlen($doc));
+    }
+
+    /**
+     * 판독기가 스트림에서 **가져오는** 바이트는 많아야 상한+1 이고(넘었음을 아는 한 바이트까지), 한 번의 청은 많아야
+     * min(청크, 상한+1 − 이미 가져온 바이트)다 — `TokenResponseCap::read` 와 같은 꼴이다. 수정 전에는 청을 8,192 바이트로 고정해
+     * 3×상한 본문에서 57,344 바이트(상한 +6,144)를 가져갔고, 남은 자리가 2,049 바이트일 때도 8,192 바이트를 청했다(실측 2026-10-09).
+     *
+     * 상한 이하인 문서는 전과 같이 받아들인다(⚠️ 받아들이는 문서 집합을 바꾸지 않는다). 청한 만큼 주는 스트림 · 한 번에 1 바이트씩
+     * 주는 스트림 · 상한 −16 까지 주고 그 뒤로 1 바이트씩 주는 스트림(청이 남은 자리까지 줄어드는지)을 함께 돈다.
+     * ⚠️ 청한 바이트의 **합**은 묶이지 않는다 — 적게 주는 스트림이면 다시 청한다. 묶이는 것은 가져온 바이트와 한 번의 청이다.
+     */
+    public function testTheReaderTakesAtMostTheCapPlusOneAndEachRequestFitsTheRoomLeft(): void
+    {
+        $cap = JwksStore::JWKS_MAX_BYTES;
+        $exceeds = KeycloakTransportError::class . ": JWKS response exceeds $cap bytes";
+        // 스트림이 한 번에 주는 바이트 — (청한 바이트, 이미 내준 바이트) → 줄 바이트
+        $asAsked = static fn (int $asked, int $taken): int => $asked;
+        $oneByte = static fn (int $asked, int $taken): int => min(1, $asked);
+        $oneByteNearTheCap = static fn (int $asked, int $taken): int => $taken >= $cap - 16 ? min(1, $asked) : min($asked, $cap - 16 - $taken);
+        /** @var array<string, array{string, \Closure(int, int): int, string}> 칸 => [본문, 주는 규칙, 기대 결과] */
+        $cases = [
+            'as asked, cap' => [self::document($cap), $asAsked, 'kid k1'],
+            'as asked, cap+1' => [self::document($cap + 1), $asAsked, $exceeds],
+            'as asked, 3×cap' => [self::document(3 * $cap), $asAsked, $exceeds],
+            'as asked, 100' => [self::document(100), $asAsked, 'kid k1'],
+            '1 byte per read, 2,048' => [self::document(2048), $oneByte, 'kid k1'],
+            '1 byte per read from cap−16, cap' => [self::document($cap), $oneByteNearTheCap, 'kid k1'],
+            '1 byte per read from cap−16, cap+1' => [self::document($cap + 1), $oneByteNearTheCap, $exceeds],
+            '1 byte per read from cap−16, 3×cap' => [self::document(3 * $cap), $oneByteNearTheCap, $exceeds],
+        ];
+        foreach ($cases as $name => [$content, $give, $want]) {
+            $taken = 0;
+            $reads = 0;
+            $tooBig = [];
+            $inner = Utils::streamFor($content);
+            $spy = FnStream::decorate($inner, [
+                'read' => static function (int $length) use ($inner, $give, $cap, &$taken, &$reads, &$tooBig): string {
+                    $room = min(JwksStore::JWKS_READ_CHUNK_BYTES, $cap + 1 - $taken);
+                    if ($length > $room) {
+                        $tooBig[] = "청 $length > 남은 자리 $room (가져간 $taken)";
+                    }
+                    $reads++;
+                    $got = $inner->read($give($length, $taken));
+                    $taken += strlen($got);
+
+                    return $got;
+                },
+            ]);
+            $store = new JwksStore('http://kc/certs', self::serving($spy), new HttpFactory());
+            self::assertSame($want, self::outcome($store), "$name: 결과");
+            self::assertLessThanOrEqual($cap + 1, $taken, "$name: 스트림에서 가져온 바이트");
+            self::assertSame([], array_slice($tooBig, 0, 3), "$name: 한 번의 청이 min(청크, 상한+1 − 가져온 바이트) 를 넘었다");
+            if ($give === $oneByte) {
+                self::assertGreaterThan(2048, $reads, "$name: 1 바이트씩 읽히지 않았다(공허)");
+            }
+        }
+    }
+
+    /**
+     * 끝(EOF)이 아닌 빈 읽기에서 멈추고 실패한다 — EOF 를 알리지 않는 본문(막힌 논블로킹 소켓 · 소비자가 주입한 PSR-18 클라이언트의
+     * 지연 본문)에서 `eof()` 만 기다리며 돌지 않는다. 수정 전 실측(2026-10-09): 합성 스트림에서 20 만 번 읽어도 멈추지 않았고(70 ms),
+     * Guzzle `stream => true` 본문을 논블로킹으로 둔 소켓에서는 서버가 연결을 닫을 때까지 3.04 초 동안 빈 읽기 1,651,136 번을 돌았다.
+     *
+     * ⚠️ 실패로 닫는다 — 그때까지 읽은 바이트로 판정하지 않는다(`TokenResponseCap::read` 와 다르다). 그렇게 판정하면 끝을 보지 못한 본문의
+     * 앞부분이 받아들여진다: 60,000 바이트 문서가 40,960 바이트에서 한 번 막혔다가 이어지면 예전 판독기는 (돈 끝에) 상한 초과였는데 앞부분
+     * 판정은 `kid k1` 을 받아들였다(Grok 레그가 찾고 실측). 끝을 찾은 빈 읽기 — PHP 소켓은 그 읽기 뒤에야 `feof()` 가 참이다 — 는 정상
+     * 끝이다. 그래서 받아들이는 문서는 예전에 받아들이던 것의 부분집합이다.
+     */
+    public function testAnEmptyReadThatIsNotTheEndFailsInsteadOfSpinning(): void
+    {
+        $doc = self::document(64);
+        $stalled = KeycloakTransportError::class . ': JWKS response stalled before its end';
+        /** @var array<string, array{string, ?int, bool, string}> 칸 => [본문, 막히는 바이트(null = 막히지 않음), 막힘이 계속되는가, 기대 결과] */
+        $cases = [
+            'nothing, then stalls' => [$doc, 0, true, $stalled],
+            'half a document, then stalls' => [$doc, 9, true, $stalled],
+            'the whole document, then stalls' => [$doc, strlen($doc), true, $stalled],
+            'a 60,000-byte document stalls once at 40,000, then goes on' => [self::document(60000), 40000, false, $stalled],
+            'the whole document, then the empty read that finds its end' => [$doc, null, false, 'kid k1'],
+        ];
+        foreach ($cases as $name => [$content, $stallAt, $forever, $want]) {
+            $reads = 0;
+            $empties = 0;
+            $ended = false;
+            $stalledOnce = false;
+            $inner = Utils::streamFor($content);
+            $spy = FnStream::decorate($inner, [
+                'read' => static function (int $length) use ($inner, $stallAt, $forever, &$reads, &$empties, &$ended, &$stalledOnce): string {
+                    if (++$reads > 1000) {
+                        throw new \LogicException('1,000 번을 읽고도 멈추지 않았다');   // 수정 전 판독기를 끝내는 안전핀
+                    }
+                    $at = $inner->tell();
+                    if ($stallAt !== null && $at >= $stallAt && ($forever || !$stalledOnce)) {
+                        $stalledOnce = true;
+                        $empties++;
+
+                        return '';   // 막혔다 — 줄 것이 없는데 끝도 아니다
+                    }
+                    $got = $inner->read($stallAt !== null && $at < $stallAt ? min($length, $stallAt - $at) : $length);
+                    if ($got === '') {
+                        $empties++;
+                        $ended = true;   // 끝을 찾은 빈 읽기 — 이 뒤로 eof() 가 참이다
+                    }
+
+                    return $got;
+                },
+                'eof' => static function () use (&$ended): bool {
+                    return $ended;   // 끝을 찾은 빈 읽기 전에는 EOF 를 알리지 않는다
+                },
+            ]);
+            $store = new JwksStore('http://kc/certs', self::serving($spy), new HttpFactory());
+            self::assertSame($want, self::outcome($store), "$name: 결과");
+            self::assertSame(1, $empties, "$name: 빈 읽기는 한 번이면 끝나야 한다");
+        }
+    }
+
+    /**
+     * 본문을 읽다 난 오류도 SDK 오류다 — 수정 전에는 하위 `\RuntimeException` 이 `getKeyByKid()` 와 공개 경계
+     * `JwtValidator::validate()` 밖으로 그대로 나갔다(§4 · 실측 2026-10-09: Guzzle `stream => true` 본문을 막힌 소켓에서 읽으면
+     * psr7 의 `Unable to read from stream`). 다른 레인의 `… response could not be read` 와 같은 꼴이고 원인은 정화된 사본이다.
+     */
+    public function testABodyThatFailsToReadIsATransportErrorAtTheValidatorBoundary(): void
+    {
+        $failing = static function (): FnStream {
+            $fail = static fn (): never => throw new \RuntimeException('tc read failure');
+
+            return new FnStream([
+                '__toString' => $fail, 'getContents' => $fail, 'read' => $fail, 'eof' => static fn (): bool => false,
+                'isSeekable' => static fn (): bool => false, 'isReadable' => static fn (): bool => true, 'getSize' => static fn (): ?int => null,
+                'close' => static fn (): null => null, 'getMetadata' => static fn (): mixed => null,
+            ]);
+        };
+        $cfg = new KeycloakConfig('https://kc.test', 'r', 'c', 'tc-client-secret');
+        $ep = new OidcEndpoints($cfg);
+        $b64 = static fn (string $v): string => rtrim(strtr(base64_encode($v), '+/', '-_'), '=');
+        $jwt = $b64('{"alg":"RS256","kid":"k1"}') . '.' . $b64('{"sub":"u1"}') . '.' . $b64('sig');
+        $calls = [
+            'getKeyByKid' => static fn (): mixed => (new JwksStore($ep->jwks(), self::serving($failing()), new HttpFactory()))->getKeyByKid('k1'),
+            'validate' => static fn (): mixed => (new JwtValidator($cfg, $ep, new JwksStore($ep->jwks(), self::serving($failing()), new HttpFactory())))->validate($jwt),
+        ];
+        foreach ($calls as $name => $call) {
+            try {
+                $call();
+                self::fail("$name: 읽을 수 없는 본문을 받아들였다");
+            } catch (\Throwable $e) {
+                self::assertInstanceOf(KeycloakTransportError::class, $e, "$name: " . $e::class . ': ' . $e->getMessage());
+                self::assertSame('JWKS response could not be read', $e->getMessage(), $name);
+                self::assertInstanceOf(SanitizedCause::class, $e->getPrevious(), "$name: 원인은 정화된 사본이다");
+            }
+        }
     }
 
     // ⚠️ **「상한이 51200 이다」를 여기서 단언하지 않는다** — php 에서는 상수 대 리터럴 비교가

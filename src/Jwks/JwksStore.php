@@ -7,6 +7,7 @@ namespace Xzawed\Keycloak\Jwks;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
+use Psr\Http\Message\StreamInterface;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\KeycloakConfig;
@@ -28,8 +29,8 @@ final class JwksStore
     public const JWKS_MAX_BYTES = 51200;
 
     /**
-     * 스트림을 읽는 청크 크기. ⚠️ `Content-Length` 로만 판정하면 그 헤더가 없거나 거짓인 응답을
-     * 놓친다 — 청크를 받으며 누적치가 상한을 넘는 순간 읽기를 끊는다.
+     * 스트림을 한 번에 청하는 바이트의 최대치. ⚠️ `Content-Length` 로만 판정하면 그 헤더가 없거나 거짓인 응답을
+     * 놓친다 — 청크를 받으며 누적치가 상한을 넘는 순간 읽기를 끊는다(`readCapped()`).
      */
     public const JWKS_READ_CHUNK_BYTES = 8192;
 
@@ -123,15 +124,11 @@ final class JwksStore
         }
         // ⚠️ 상한은 **상태와 무관하게** 건다. 200 만 겨누면 오류 응답의 거대 본문이 그대로
         // 들어온다 — 그게 수정 전의 순서였다(상태 검사 전에 전체 슬러프 + `json_decode`).
-        $body = $response->getBody();
-        $buf = '';
-        while (!$body->eof()) {
-            $buf .= $body->read(self::JWKS_READ_CHUNK_BYTES);
-            if (strlen($buf) > self::JWKS_MAX_BYTES) {
-                throw new KeycloakTransportError(
-                    sprintf('JWKS response exceeds %d bytes', self::JWKS_MAX_BYTES),
-                );
-            }
+        $buf = self::readCapped($response->getBody());
+        if ($buf === null) {
+            throw new KeycloakTransportError(
+                sprintf('JWKS response exceeds %d bytes', self::JWKS_MAX_BYTES),
+            );
         }
         $json = json_decode($buf, true);
         if ($response->getStatusCode() !== 200 || !is_array($json) || !isset($json['keys']) || !is_array($json['keys'])) {
@@ -160,6 +157,49 @@ final class JwksStore
         }
         $this->keys = $map;
         $this->loadedOnce = true;
+    }
+
+    /**
+     * 본문을 많아야 상한+1 바이트까지 읽어 상한 이하면 그 바이트를, 넘으면 null 을 돌려준다(`TokenResponseCap::read` 와 같은 꼴).
+     * 한 번의 청은 많아야 min(`JWKS_READ_CHUNK_BYTES`, 상한+1 − 이미 가져온 바이트)라 스트림에서 **가져오는** 바이트는 많아야
+     * 상한+1 이다(PSR-7 `read()` 는 청한 것보다 많이 주지 않는다). ⚠️ 예전에는 청을 8,192 로 고정해 상한을 6,144 바이트 넘겨
+     * 가져갔다(3×상한 본문에서 57,344). 청한 바이트의 **합**은 묶이지 않는다 — 적게 주는 스트림이면 다시 청한다.
+     *
+     * ⚠️ 끝(EOF)이 아닌 빈 읽기에서 멈추고 **실패한다** — EOF 를 알리지 않는 본문(막힌 논블로킹 소켓, 소비자가 주입한 클라이언트의
+     * 지연 본문)에서 `eof()` 만 기다리면 돈다(실측 2026-10-09: 서버가 닫을 때까지 빈 읽기 1,651,136 번). 그때까지 읽은 바이트로
+     * 판정하지 않는 이유: 끝을 보지 못한 본문의 앞부분이 받아들여진다(실측: 40,960 바이트에서 한 번 막힌 60,000 바이트 문서 — 예전에는
+     * 상한 초과, 앞부분 판정은 수락). 끝을 찾은 빈 읽기(PHP 소켓은 그 읽기 뒤에야 `feof()` 가 참이다)는 정상 끝이다. SDK 가 만든
+     * 클라이언트의 본문은 다 받아 둔 임시 스트림이라 끝이 아닌 빈 읽기가 없다(실측: 실제 HTTP 432 칸에서 0 번).
+     *
+     * @throws KeycloakTransportError 끝이 아닌 빈 읽기, 또는 본문을 읽다 난 오류 — 하위 예외는 정화된 사본으로만 단다(§4). 예전에는
+     *   psr7 의 `\RuntimeException`(막힌 소켓의 `Unable to read from stream`)이 `JwtValidator::validate()` 밖으로 그대로 나갔다.
+     */
+    private static function readCapped(StreamInterface $body): ?string
+    {
+        $buf = '';
+        $empty = false;
+        $stalled = false;
+        try {
+            while (!$body->eof()) {
+                if ($empty) {
+                    $stalled = true;   // 빈 읽기 뒤에도 끝이 아니다 — 끝을 찾은 빈 읽기였다면 위 조건이 루프를 끝냈다
+                    break;
+                }
+                $chunk = $body->read(min(self::JWKS_READ_CHUNK_BYTES, self::JWKS_MAX_BYTES + 1 - strlen($buf)));
+                $empty = $chunk === '';
+                $buf .= $chunk;
+                if (strlen($buf) > self::JWKS_MAX_BYTES) {
+                    return null;
+                }
+            }
+        } catch (\Throwable $e) {
+            throw new KeycloakTransportError('JWKS response could not be read', previous: SanitizedCause::of($e));
+        }
+        if ($stalled) {
+            throw new KeycloakTransportError('JWKS response stalled before its end');
+        }
+
+        return $buf;
     }
 
     /**

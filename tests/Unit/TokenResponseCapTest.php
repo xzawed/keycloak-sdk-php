@@ -8,6 +8,8 @@ use Fschmtt\Keycloak\Exception\VersionDetectionException;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Handler\CurlVersion;
+use GuzzleHttp\Handler\StreamHandler;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Promise\PromiseInterface;
@@ -15,6 +17,7 @@ use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\HttpFactory;
 use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\Utils;
+use GuzzleHttp\Utils as GuzzleUtils;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Xzawed\Keycloak\AuthClient;
@@ -45,9 +48,20 @@ use Xzawed\Keycloak\OidcEndpoints;
  *
  * 할당은 `memory_reset_peak_usage()` 뒤의 zend 피크로 잰다. 수신자(클라이언트·admin 파사드)는 재기 **전에** 만든다 — 클래스
  * 적재·조립은 본문 판정의 몫이 아니다.
+ *
+ * 실제 HTTP 칸은 전송 둘을 돈다 — `curl`(ext-curl 이 있으면 Guzzle 이 고르는 기본)과 `stream`(ext-curl 이 없는 설치에서 Guzzle 이
+ * 고르는 `StreamHandler` — composer.json 은 ext-curl 을 요구하지 않는다). 둘은 상한을 다른 갈래로 지난다: curl 은 싱크의 짧은
+ * 쓰기에 전송을 끊어 요청이 **거부**되고(CURLE_WRITE_ERROR → `overflowed()`), stream 은 psr7 복사가 멈춰 상한+1 바이트를 담은
+ * 응답이 **이행**된다(판독기가 null). 수정 전에는 이 시험이 curl 로만 돌았다 — `StreamHandler::__invoke` 를 부숴도 91 칸이 다
+ * 초록이었다(실측 2026-10-09).
  */
 final class TokenResponseCapTest extends TestCase
 {
+    /** 실제 HTTP 칸이 도는 전송 — `useTransport()`. */
+    private const TRANSPORTS = ['curl', 'stream'];
+
+    /** @var array{\ReflectionProperty, mixed}|null `stream` 칸이 바꾼 Guzzle 의 curl 판 캐시와 그 전 값 — `tearDown()` 이 되돌린다 */
+    private ?array $curlInfo = null;
     /** ⚠️ SDK 상수와 따로 적는다 — 상수가 바뀌면 `testTheCapIsOneMebibyte` 가 운다. */
     private const CAP = 1048576;
 
@@ -275,38 +289,83 @@ final class TokenResponseCapTest extends TestCase
         self::$current = $this->dataName() === '' ? $this->name() : (string) $this->dataName();
     }
 
-    /** @return array<string, array{string}> */
+    protected function tearDown(): void
+    {
+        if ($this->curlInfo !== null) {
+            [$property, $before] = $this->curlInfo;
+            $property->setValue(null, $before);
+            $this->curlInfo = null;
+        }
+    }
+
+    /**
+     * 이 칸의 전송을 고른다 — 수신자를 만들기 **전에** 부른다(Guzzle 은 클라이언트를 만들 때 핸들러를 고른다).
+     *
+     * `stream` 은 ext-curl 이 없는 설치다: Guzzle 이 핸들러를 고를 때 묻는 curl 판 캐시(`CurlVersion::$versionInfo` — 처음 물을 때
+     * `curl_version()` 으로 채운다)를 `curl_version()` 이 없을 때의 값(false)으로 둔다. 그러면 `HandlerStack::create()` —
+     * `KeycloakClient::create()`·`AdminClient`·주입 클라이언트가 모두 이것으로 만든다 — 가 `StreamHandler` 를 고른다. SDK 의 조립
+     * 코드는 손대지 않는다. ⚠️ Guzzle 내부(@internal)라 이름이 바뀌면 리플렉션이 크게 실패한다 — 조용히 curl 로 돌지 않게 아래에서
+     * 고른 핸들러를 확인한다.
+     */
+    private function useTransport(string $transport): void
+    {
+        if ($transport === 'stream') {
+            $property = new \ReflectionProperty(CurlVersion::class, 'versionInfo');
+            $this->curlInfo = [$property, $property->getValue()];
+            $property->setValue(null, false);
+        }
+        $chosen = GuzzleUtils::chooseHandler();
+        if ($transport === 'stream') {
+            self::assertInstanceOf(StreamHandler::class, $chosen, 'ext-curl 없는 설치를 흉내 내지 못했다 — Guzzle 이 StreamHandler 를 고르지 않았다');
+        } else {
+            self::assertNotInstanceOf(StreamHandler::class, $chosen, 'curl 칸인데 Guzzle 이 StreamHandler 를 골랐다 — ext-curl 이 없다');
+        }
+    }
+
+    /** 데이터 칸 이름 — curl 칸은 예전 이름 그대로, stream 칸은 ` · stream` 을 붙인다. */
+    private static function rowName(string $name, string $transport): string
+    {
+        return $transport === 'curl' ? $name : "$name · $transport";
+    }
+
+    /** @return array<string, array{string, string}> 레인 × 전송 */
     public static function lanes(): array
     {
         $out = [];
         foreach (array_keys(self::OVER) as $lane) {
-            $out[$lane] = [$lane];
-        }
-
-        return $out;
-    }
-
-    /** @return array<string, array{string, string, bool}> 레인 × 본문 틀(`cl` 길이를 안다 · `close` 모른다 · `gzip` 푼 바이트) */
-    public static function lanesByFraming(): array
-    {
-        $out = [];
-        foreach (array_keys(self::OVER) as $lane) {
-            foreach (['cl' => false, 'close' => false, 'gzip' => true] as $framing => $gzip) {
-                $out["$lane $framing"] = [$lane, $framing === 'gzip' ? 'close' : $framing, $gzip];
+            foreach (self::TRANSPORTS as $transport) {
+                $out[self::rowName($lane, $transport)] = [$lane, $transport];
             }
         }
 
         return $out;
     }
 
-    /** @return array<string, array{string, int, string, bool}> 레인 × 거대 본문(16 MiB 길이 앎 · 32 MiB 모름 · 32 MiB gzip) */
+    /** @return array<string, array{string, string, bool, string}> 레인 × 본문 틀(`cl` 길이를 안다 · `close` 모른다 · `gzip` 푼 바이트) × 전송 */
+    public static function lanesByFraming(): array
+    {
+        $out = [];
+        foreach (array_keys(self::OVER) as $lane) {
+            foreach (['cl' => false, 'close' => false, 'gzip' => true] as $framing => $gzip) {
+                foreach (self::TRANSPORTS as $transport) {
+                    $out[self::rowName("$lane $framing", $transport)] = [$lane, $framing === 'gzip' ? 'close' : $framing, $gzip, $transport];
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, array{string, int, string, bool, string}> 레인 × 거대 본문(16 MiB 길이 앎 · 32 MiB 모름 · 32 MiB gzip) × 전송 */
     public static function lanesByHugeBody(): array
     {
         $out = [];
         foreach (array_keys(self::OVER) as $lane) {
-            $out["$lane 16 MiB cl"] = [$lane, 16 * self::CAP, 'cl', false];
-            $out["$lane 32 MiB close"] = [$lane, 32 * self::CAP, 'close', false];
-            $out["$lane 32 MiB gzip"] = [$lane, 32 * self::CAP, 'close', true];
+            foreach (self::TRANSPORTS as $transport) {
+                $out[self::rowName("$lane 16 MiB cl", $transport)] = [$lane, 16 * self::CAP, 'cl', false, $transport];
+                $out[self::rowName("$lane 32 MiB close", $transport)] = [$lane, 32 * self::CAP, 'close', false, $transport];
+                $out[self::rowName("$lane 32 MiB gzip", $transport)] = [$lane, 32 * self::CAP, 'close', true, $transport];
+            }
         }
 
         return $out;
@@ -328,8 +387,9 @@ final class TokenResponseCapTest extends TestCase
      * introspect·logout 의 응답은 토큰을 싣지 않는다 — 그 둘은 평범한 응답이 지나가는지만 본다.
      */
     #[DataProvider('lanes')]
-    public function testTheLargestBearerKeycloakAcceptsPassesOnEveryLane(string $lane): void
+    public function testTheLargestBearerKeycloakAcceptsPassesOnEveryLane(string $lane, string $transport): void
     {
+        $this->useTransport($transport);
         self::serve('token', ['access' => self::LARGEST_BEARER]);
         $call = self::lane($lane);
         [$result] = self::measure($call);
@@ -351,8 +411,9 @@ final class TokenResponseCapTest extends TestCase
     }
 
     #[DataProvider('lanesByFraming')]
-    public function testABodyOfExactlyTheCapPasses(string $lane, string $framing, bool $gzip): void
+    public function testABodyOfExactlyTheCapPasses(string $lane, string $framing, bool $gzip, string $transport): void
     {
+        $this->useTransport($transport);
         self::serve(self::endpoint($lane), ['size' => self::CAP, 'framing' => $framing, 'gzip' => $gzip]);
         [$result] = self::measure(self::lane($lane));
         if ($result instanceof \Throwable) {
@@ -362,8 +423,9 @@ final class TokenResponseCapTest extends TestCase
     }
 
     #[DataProvider('lanesByFraming')]
-    public function testABodyOneByteOverTheCapFails(string $lane, string $framing, bool $gzip): void
+    public function testABodyOneByteOverTheCapFails(string $lane, string $framing, bool $gzip, string $transport): void
     {
+        $this->useTransport($transport);
         self::serve(self::endpoint($lane), ['size' => self::CAP + 1, 'framing' => $framing, 'gzip' => $gzip]);
         [$result] = self::measure(self::lane($lane));
         self::assertInstanceOf(KeycloakTransportError::class, $result, "$lane: 상한+1 바이트 본문은 KeycloakTransportError 여야 한다 — "
@@ -376,15 +438,31 @@ final class TokenResponseCapTest extends TestCase
     }
 
     #[DataProvider('lanesByHugeBody')]
-    public function testAHugeBodyFailsWithAnAllocationThatDoesNotGrowWithIt(string $lane, int $size, string $framing, bool $gzip): void
+    public function testAHugeBodyFailsWithAnAllocationThatDoesNotGrowWithIt(string $lane, int $size, string $framing, bool $gzip, string $transport): void
     {
+        $this->useTransport($transport);
         self::serve(self::endpoint($lane), ['size' => $size, 'framing' => $framing, 'gzip' => $gzip]);
         [$result, $peak] = self::measure(self::lane($lane));
         self::assertInstanceOf(KeycloakTransportError::class, $result, "$lane: " . (is_object($result) ? $result::class : 'success'));
         self::assertSame(self::OVER[$lane], $result->getMessage());
-        self::assertLessThan(self::BOUND_OVER, $peak, "$lane: {$size} 바이트 본문을 거부하며 zend 메모리를 $peak 바이트 잡았다");
+        // ⚠️ stream 의 gzip 은 고정 상한으로 재지 않는다 — Guzzle `StreamHandler` 는 gzip 을 psr7 `InflateStream`(PHP `zlib.inflate` 스트림
+        // 필터)으로 푸는데, 필터는 압축된 읽기 한 번을 **통째로** 풀어 읽기 버퍼에 담은 뒤에야 싱크에 넘긴다. 그 몫은 SDK 밖이고 본문 크기와
+        // 무관하다(실측 2026-10-09 · ext-curl 을 끈 프로세스: cc·introspect·admin 이 8·16·32·64·128 MiB 에서 7.3–8.1 MB 로 평탄 ·
+        // curl 은 libcurl 이 풀어 1.1–1.9 MB). 그래서 이 칸은 이름대로 「본문이 커져도 늘지 않는다」를 잰다 — 절반 본문의 피크와 비교한다
+        // (싱크나 판독기가 본문을 쥐면 본문과 함께 는다). ⚠️ cctp 는 뺀다 — 요청별 싱크가 없어 주입 클라이언트가 본문을 끝까지 풀어
+        // 받는다(문서화된 한계 · 실측 4→32 MiB 에 7.2→20.5 MB 로 늘고 128 MiB 까지 20.7 MB · curl 은 2.7 MB 평탄).
+        $inflatedOnTheSide = $transport === 'stream' && $gzip;
+        if (!$inflatedOnTheSide) {
+            self::assertLessThan(self::BOUND_OVER, $peak, "$lane: {$size} 바이트 본문을 거부하며 zend 메모리를 $peak 바이트 잡았다");
+        }
         if ($lane === 'admin') {
             self::assertSame([], self::adminRequests());
+        }
+        if ($inflatedOnTheSide && $lane !== 'cctp') {
+            self::serve(self::endpoint($lane), ['size' => intdiv($size, 2), 'framing' => $framing, 'gzip' => true]);
+            [$half, $halfPeak] = self::measure(self::lane($lane));
+            self::assertInstanceOf(KeycloakTransportError::class, $half, "$lane: 절반 본문도 상한을 넘는다");
+            self::assertLessThan($halfPeak + self::CAP, $peak, "$lane: {$size} 바이트 gzip 본문의 피크 $peak 가 절반 본문의 피크 $halfPeak 보다 1 MiB 넘게 컸다 — 본문과 함께 는다");
         }
         // 전송도 상한 근처에서 끊긴다(싱크) — 판독기만으로는 거부는 같아도 서버가 본문을 끝까지 보낸다(logout 수정 전: 16 MiB 를 다 받아
         // 임시 파일에 썼다). ⚠️ cctp 는 뺀다 — PSR-18 `sendRequest()` 에는 요청별 싱크가 없어 주입 클라이언트가 끝까지 받는다(문서화된
@@ -399,14 +477,22 @@ final class TokenResponseCapTest extends TestCase
         }
     }
 
-    /** @return array<string, array{int, string, int}> 상한을 넘는 admin 토큰 응답 — [본문 바이트, 틀, 상태] */
+    /** @return array<string, array{int, string, int, string}> 상한을 넘는 admin 토큰 응답 — [본문 바이트, 틀, 상태, 전송] */
     public static function overCapAdminTokenBodies(): array
     {
-        return [
+        $rows = [
             '200 cap+1 cl' => [self::CAP + 1, 'cl', 200],        // 끝까지 받은 응답을 판독기가 거부한다(미들웨어의 이행 갈래)
-            '200 16 MiB cl' => [16 * self::CAP, 'cl', 200],      // curl 이 짧은 쓰기에 끊은 전송(거부 갈래)
-            '400 32 MiB close' => [32 * self::CAP, 'close', 400], // 오류 상태도 같은 거부 갈래
+            '200 16 MiB cl' => [16 * self::CAP, 'cl', 200],      // curl 은 짧은 쓰기에 끊은 전송(거부 갈래) · stream 은 이행 갈래
+            '400 32 MiB close' => [32 * self::CAP, 'close', 400], // 오류 상태도 같은 갈래
         ];
+        $out = [];
+        foreach ($rows as $name => [$size, $framing, $status]) {
+            foreach (self::TRANSPORTS as $transport) {
+                $out[self::rowName($name, $transport)] = [$size, $framing, $status, $transport];
+            }
+        }
+
+        return $out;
     }
 
     /** 호출이 던진 것 — 던지지 않았으면 null(PHPUnit 의 실패 예외를 삼키지 않으려고 `try` 밖에서 판정한다). */
@@ -433,8 +519,9 @@ final class TokenResponseCapTest extends TestCase
      * 라이브러리의 계약이라 SDK 가 raw() 에서 바꾸지 않는다 — 사슬은 여전히 하위 라이브러리 클래스뿐이고 Guzzle 예외는 그 원인이다.
      */
     #[DataProvider('overCapAdminTokenBodies')]
-    public function testAdminRawGetsLowerLibraryErrorsWhileTheFacadeKeepsItsError(int $size, string $framing, int $status): void
+    public function testAdminRawGetsLowerLibraryErrorsWhileTheFacadeKeepsItsError(int $size, string $framing, int $status, string $transport): void
     {
+        $this->useTransport($transport);
         $cfg = new KeycloakConfig('http://127.0.0.1:' . self::$port, 'r', 'c', 'tc-client-secret', readTimeout: 30.0);
         $spec = ['size' => $size, 'framing' => $framing, 'status' => $status];
 
@@ -468,8 +555,9 @@ final class TokenResponseCapTest extends TestCase
      * 상한 안이면 그 레인이 오늘 내는 오류 그대로(`KeycloakAuthError` · admin 은 상태를 지킨 `KeycloakAdminError`), 넘으면 상한 오류다.
      */
     #[DataProvider('lanes')]
-    public function testAnErrorStatusBodyIsCappedToo(string $lane): void
+    public function testAnErrorStatusBodyIsCappedToo(string $lane, string $transport): void
     {
+        $this->useTransport($transport);
         $sizes = [self::CAP => false, self::CAP + 1 => true, 32 * self::CAP => true];
         foreach ($sizes as $size => $over) {
             self::serve(self::endpoint($lane), ['size' => $size, 'framing' => 'close', 'status' => 400]);
@@ -496,8 +584,9 @@ final class TokenResponseCapTest extends TestCase
 
     /** 2 KiB 남짓한 본문의 판정이 상한 근처를 미리 잡지 않는다 — 읽은 만큼만 자란다. */
     #[DataProvider('lanes')]
-    public function testASmallBodyAllocatesFarLessThanTheCap(string $lane): void
+    public function testASmallBodyAllocatesFarLessThanTheCap(string $lane, string $transport): void
     {
+        $this->useTransport($transport);
         self::serve(self::endpoint($lane), ['size' => 2048]);
         (self::lane($lane))();   // 데우기 — 처음 쓰는 클래스의 적재를 재지 않는다
         // ⚠️ 재는 호출은 **새 수신자**다 — `ClientCredentialsTokenProvider` 와 admin(fschmtt)은 받은 토큰을 캐시해, 데운 수신자를 다시
