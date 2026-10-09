@@ -17,7 +17,7 @@
     "firebase/php-jwt": "^7.1",
     "league/oauth2-client": "^2.8",
     "stevenmaguire/oauth2-keycloak": "^6.1",
-    "fschmtt/keycloak-rest-api-client-php": "0.43.0",
+    "fschmtt/keycloak-rest-api-client-php": "0.44.0",
     "guzzlehttp/guzzle": "^7.9",
     "guzzlehttp/psr7": "^2.7",
     "psr/http-client": "^1.0",

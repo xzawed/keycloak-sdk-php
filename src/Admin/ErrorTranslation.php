@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Admin;
 
 use Fschmtt\Keycloak\Exception\BuilderException;
+use Fschmtt\Keycloak\Exception\VersionDetectionException;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\ClientException;
 use GuzzleHttp\Exception\ConnectException;
@@ -31,6 +32,13 @@ use Xzawed\Keycloak\Internal\TokenResponseCap;
  * `getMessage()`·`(string)$e`·`var_dump`·`print_r` 로 찍혔다(실측 2026-10-02). 남기는 것: 타입 · HTTP 상태(`getStatusCode()`) ·
  * 토큰 부여 오류의 OAuth `error` 코드(`OAuthErrorCode` 모양일 때만). 파사드가 보내는 입력(representation·검색 조건)은 각
  * 자원 메서드가 `#[\SensitiveParameter]` 로 가린다 — 경로로 가는 식별자는 원인의 URL 처럼 남는다.
+ *
+ * ⚠️ fschmtt 0.44 는 버전을 알기 전의 자원 접근마다 먼저 하는 버전 탐지(`GET /admin/serverinfo` — 첫 admin 토큰 부여가 거기서
+ * 난다)에서 난 실패를 **전부** `VersionDetectionException` 으로 감싸 원인으로 단다(`Keycloak::fetchVersion`). 감싼 채로는
+ * 토큰 부여의 401·전송 실패·상한 거부가 맨 아래 그물로 떨어졌다(#750: 「admin request failed unexpectedly」, 상태 null).
+ * 그래서 그 원인을 꺼내 같은 사다리에 다시 던진다 —
+ * 0.43 이 그대로 던지던 바로 그 객체라 타입·상태·메시지·원인 사본이 같다. 원인이 없으면(systemInfo 를 감춘 serverinfo) 감싼 것
+ * 그대로 그물로 간다 — 0.43 에서는 null 위의 호출이 낸 `\Error` 가 같은 그물로 갔다(`AdminFacadeErrorLeakTest` 의 serverinfo 두 칸).
  */
 final class ErrorTranslation
 {
@@ -54,7 +62,11 @@ final class ErrorTranslation
     public static function call(#[\SensitiveParameter] callable $fn): mixed
     {
         try {
-            return $fn();
+            try {
+                return $fn();
+            } catch (VersionDetectionException $e) {
+                throw $e->getPrevious() ?? $e;   // fschmtt 0.44 의 감싸기를 벗긴다 — 클래스 docblock.
+            }
         } catch (ClientException $e) {
             $status = $e->getResponse()->getStatusCode();
             $message = self::failed($e);

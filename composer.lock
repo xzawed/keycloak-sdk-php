@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "475a9e20167941609712e1e38b20a7c2",
+    "content-hash": "b7295098f60de69befadf4b043f5818a",
     "packages": [
         {
             "name": "firebase/php-jwt",
@@ -82,16 +82,16 @@
         },
         {
             "name": "fschmtt/keycloak-rest-api-client-php",
-            "version": "v0.43.0",
+            "version": "v0.44.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/fschmtt/keycloak-rest-api-client-php.git",
-                "reference": "1c298941ce9100f8dc6316dbc6322596e4d160c2"
+                "reference": "a49de97140bb6e5daa332da96bed1d5a858b04ca"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/fschmtt/keycloak-rest-api-client-php/zipball/1c298941ce9100f8dc6316dbc6322596e4d160c2",
-                "reference": "1c298941ce9100f8dc6316dbc6322596e4d160c2",
+                "url": "https://api.github.com/repos/fschmtt/keycloak-rest-api-client-php/zipball/a49de97140bb6e5daa332da96bed1d5a858b04ca",
+                "reference": "a49de97140bb6e5daa332da96bed1d5a858b04ca",
                 "shasum": ""
             },
             "require": {
@@ -129,9 +129,9 @@
             "description": "PHP client to interact with Keycloak's Admin REST API.",
             "support": {
                 "issues": "https://github.com/fschmtt/keycloak-rest-api-client-php/issues",
-                "source": "https://github.com/fschmtt/keycloak-rest-api-client-php/tree/v0.43.0"
+                "source": "https://github.com/fschmtt/keycloak-rest-api-client-php/tree/v0.44.0"
             },
-            "time": "2026-07-29T09:42:54+00:00"
+            "time": "2026-09-29T19:47:05+00:00"
         },
         {
             "name": "guzzlehttp/guzzle",
@@ -3889,11 +3889,11 @@
         },
         {
             "name": "phpstan/phpstan",
-            "version": "2.2.16",
+            "version": "2.3.1",
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/46a6d9060e5a7763adfcc21ebcb8b504ebdbcb92",
-                "reference": "46a6d9060e5a7763adfcc21ebcb8b504ebdbcb92",
+                "url": "https://api.github.com/repos/phpstan/phpstan/zipball/6155239b488e95d26d1ebd95c6b4bb294d7f09db",
+                "reference": "6155239b488e95d26d1ebd95c6b4bb294d7f09db",
                 "shasum": ""
             },
             "require": {
@@ -3949,20 +3949,20 @@
                     "type": "github"
                 }
             ],
-            "time": "2026-09-25T09:31:51+00:00"
+            "time": "2026-10-08T21:09:11+00:00"
         },
         {
             "name": "phpstan/phpstan-phpunit",
-            "version": "2.0.19",
+            "version": "2.0.21",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpstan/phpstan-phpunit.git",
-                "reference": "33a190a5e8e69fd18308443a80d4f43f42d43604"
+                "reference": "8dbdc3a3e2d7c5dfea655d20ecca5bc9b1b1e441"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan-phpunit/zipball/33a190a5e8e69fd18308443a80d4f43f42d43604",
-                "reference": "33a190a5e8e69fd18308443a80d4f43f42d43604",
+                "url": "https://api.github.com/repos/phpstan/phpstan-phpunit/zipball/8dbdc3a3e2d7c5dfea655d20ecca5bc9b1b1e441",
+                "reference": "8dbdc3a3e2d7c5dfea655d20ecca5bc9b1b1e441",
                 "shasum": ""
             },
             "require": {
@@ -4005,27 +4005,27 @@
             ],
             "support": {
                 "issues": "https://github.com/phpstan/phpstan-phpunit/issues",
-                "source": "https://github.com/phpstan/phpstan-phpunit/tree/2.0.19"
+                "source": "https://github.com/phpstan/phpstan-phpunit/tree/2.0.21"
             },
-            "time": "2026-09-26T17:07:06+00:00"
+            "time": "2026-10-01T11:59:29+00:00"
         },
         {
             "name": "phpstan/phpstan-strict-rules",
-            "version": "2.0.12",
+            "version": "2.1.0",
             "source": {
                 "type": "git",
                 "url": "https://github.com/phpstan/phpstan-strict-rules.git",
-                "reference": "2bc5ae19ae965663b62ac907ee6342c3903ec93b"
+                "reference": "24ec51589f896f048d0d36de373d993b5cf71786"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/phpstan/phpstan-strict-rules/zipball/2bc5ae19ae965663b62ac907ee6342c3903ec93b",
-                "reference": "2bc5ae19ae965663b62ac907ee6342c3903ec93b",
+                "url": "https://api.github.com/repos/phpstan/phpstan-strict-rules/zipball/24ec51589f896f048d0d36de373d993b5cf71786",
+                "reference": "24ec51589f896f048d0d36de373d993b5cf71786",
                 "shasum": ""
             },
             "require": {
                 "php": "^7.4 || ^8.0",
-                "phpstan/phpstan": "^2.1.52"
+                "phpstan/phpstan": "^2.3"
             },
             "require-dev": {
                 "php-parallel-lint/php-parallel-lint": "^1.2",
@@ -4057,9 +4057,9 @@
             ],
             "support": {
                 "issues": "https://github.com/phpstan/phpstan-strict-rules/issues",
-                "source": "https://github.com/phpstan/phpstan-strict-rules/tree/2.0.12"
+                "source": "https://github.com/phpstan/phpstan-strict-rules/tree/2.1.0"
             },
-            "time": "2026-07-19T07:24:06+00:00"
+            "time": "2026-10-01T21:30:37+00:00"
         },
         {
             "name": "phpunit/php-code-coverage",

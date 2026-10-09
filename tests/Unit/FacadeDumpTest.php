@@ -61,7 +61,7 @@ final class FacadeDumpTest extends TestCase
             . 'SDK 경계(AuthClient::getAccessToken)가 받아 원인 없는 KeycloakTransportError 로 바꾼다. 그 프로바이더는 AuthClient 가 private 로만 '
             . '쥐어 탈출구가 없으므로 소비자가 쥘 수 없다(TokenResponseCapTest::testABodyOneByteOverTheCapFails 가 경계 밖 예외의 타입과 원인 '
             . '없음을 잰다). admin 레인은 raw() 가 하위 오류를 내보내므로 이것을 쓰지 않고 Guzzle RequestException 을 던진다'
-            . '(TokenResponseCapTest::testAdminRawGetsAGuzzleExceptionWhileTheFacadeKeepsItsError).',
+            . '(TokenResponseCapTest::testAdminRawGetsLowerLibraryErrorsWhileTheFacadeKeepsItsError).',
     ];
 
     /**

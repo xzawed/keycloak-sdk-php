@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Xzawed\Keycloak\Tests\Unit;
 
+use Fschmtt\Keycloak\Exception\VersionDetectionException;
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
@@ -426,22 +427,29 @@ final class TokenResponseCapTest extends TestCase
      * 놓친다(실측: 이 시험 전에는 `\UnexpectedValueException` 을 잇는 `Internal\ResponseTooLarge` 가 나왔다 — 그 전 ff40a07 은 그
      * 응답을 받아들였다). 메시지는 상한 문구뿐이고(토큰·시크릿 없음) 응답과 원인을 달지 않는다 — 받은 본문은 토큰을 담는다. 같은 본문을
      * 파사드로 부르면 오늘의 `KeycloakTransportError`(원인 없음)다. 어느 길이든 admin REST 요청은 나가지 않는다.
+     *
+     * ⚠️ fschmtt 0.44 부터 raw() 의 이 실패는 fschmtt 자신의 `VersionDetectionException` 이 감싼다 — 첫 자원 접근이 버전을 묻고
+     * (`GET /admin/serverinfo`, 토큰 부여가 거기서 난다) 그 안의 실패를 전부 감싸 원인으로 단다(`Keycloak::fetchVersion`). 하위
+     * 라이브러리의 계약이라 SDK 가 raw() 에서 바꾸지 않는다 — 사슬은 여전히 하위 라이브러리 클래스뿐이고 Guzzle 예외는 그 원인이다.
      */
     #[DataProvider('overCapAdminTokenBodies')]
-    public function testAdminRawGetsAGuzzleExceptionWhileTheFacadeKeepsItsError(int $size, string $framing, int $status): void
+    public function testAdminRawGetsLowerLibraryErrorsWhileTheFacadeKeepsItsError(int $size, string $framing, int $status): void
     {
         $cfg = new KeycloakConfig('http://127.0.0.1:' . self::$port, 'r', 'c', 'tc-client-secret', readTimeout: 30.0);
         $spec = ['size' => $size, 'framing' => $framing, 'status' => $status];
 
         self::serve('token', $spec);
         $raw = KeycloakClient::create($cfg)->admin()->raw();
-        $e = self::thrown(static fn (): int => count($raw->users()->all('r')));
-        self::assertInstanceOf(GuzzleException::class, $e, 'raw(): ' . ($e === null ? 'success' : $e::class . ': ' . $e->getMessage()));
+        $outer = self::thrown(static fn (): int => count($raw->users()->all('r')));
+        self::assertInstanceOf(VersionDetectionException::class, $outer, 'raw(): ' . ($outer === null ? 'success' : $outer::class . ': ' . $outer->getMessage()));
+        $e = $outer->getPrevious();
+        self::assertInstanceOf(GuzzleException::class, $e, 'raw() 원인: ' . ($e === null ? 'null' : $e::class . ': ' . $e->getMessage()));
         self::assertInstanceOf(RequestException::class, $e);
         self::assertStringStartsWith('GuzzleHttp\\Exception\\', $e::class, 'raw() 가 내보내는 것은 하위 라이브러리의 클래스다');
         self::assertSame('admin token response exceeds 1048576 bytes', $e->getMessage());
         foreach (['tc-client-secret', 'eyJ', str_repeat('A', 32)] as $secret) {   // 시크릿 · 가짜 IdP 토큰의 머리와 서명 조각
             self::assertStringNotContainsString($secret, $e->getMessage());
+            self::assertStringNotContainsString($secret, $outer->getMessage());
         }
         self::assertFalse($e->hasResponse(), '받은 본문(토큰을 담는다)을 달지 않는다');
         self::assertNull($e->getPrevious());

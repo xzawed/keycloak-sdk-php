@@ -6,6 +6,7 @@ namespace Xzawed\Keycloak\Tests\Unit\Admin;
 
 use Fschmtt\Keycloak\Builder;
 use Fschmtt\Keycloak\Collection\CredentialCollection;
+use Fschmtt\Keycloak\Exception\VersionDetectionException;
 use Fschmtt\Keycloak\Http\Criteria;
 use Fschmtt\Keycloak\Keycloak;
 use Fschmtt\Keycloak\OAuth\GrantType;
@@ -31,6 +32,7 @@ use Psr\Http\Message\RequestInterface;
 use Xzawed\Keycloak\Admin\AdminClient;
 use Xzawed\Keycloak\Exception\KeycloakAdminError;
 use Xzawed\Keycloak\Exception\KeycloakConflictError;
+use Xzawed\Keycloak\Exception\KeycloakForbiddenError;
 use Xzawed\Keycloak\Exception\KeycloakNotFoundError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
@@ -140,6 +142,17 @@ final class AdminFacadeErrorLeakTest extends TestCase
                 'message' => 'admin request failed: HTTP 500',
                 'cause' => [ServerException::class, 'HTTP 500 from ', ' (response body withheld)'], 'reach' => 'admin',
                 'id' => 'id-1/protocol/openid-connect/token'],
+            // fschmtt 0.44 는 버전 탐지(serverinfo)의 실패를 전부 `VersionDetectionException` 으로 감싼다 — 토큰 부여만이 아니라
+            // serverinfo 요청 자신의 실패도. 분류는 감싸기 전 그대로다(Bearer 를 실은 요청이라 admin 요청의 문구).
+            'serverinfo 403 · error body echoes' => ['class' => KeycloakForbiddenError::class, 'status' => 403,
+                'message' => 'admin request failed: HTTP 403',
+                'cause' => [ClientException::class, 'HTTP 403 from GET ' . self::SERVER . '/admin/serverinfo (response body withheld)', ''],
+                'reach' => 'serverinfo'],
+            // 0.44 에서 새로 생긴 꼴 — 원인 없는 `VersionDetectionException`(systemInfo 를 감춘 serverinfo). SDK 쪽은 0.43 과 같은
+            // 갈래다(그때는 null 위의 호출이 낸 `\Error`). 원인 사본만 그 클래스를 남긴다.
+            'serverinfo without systemInfo' => ['class' => KeycloakAdminError::class, 'status' => null,
+                'message' => 'admin request failed unexpectedly',
+                'cause' => [VersionDetectionException::class, $withheld, ''], 'reach' => 'serverinfo'],
         ];
     }
 
@@ -169,7 +182,13 @@ final class AdminFacadeErrorLeakTest extends TestCase
             }
             if ($path === '/admin/serverinfo') {
                 // fschmtt 는 첫 자원 접근 전에 서버 버전을 묻는다 — 여기서 실패하면 자원 엔드포인트에 못 닿는다.
-                return Create::promiseFor(new Response(200, $json, '{"systemInfo":{"version":"26.0.0"}}'));
+                return match (self::$mode) {
+                    'serverinfo 403 · error body echoes' => Create::promiseFor(new Response(403, $json, (string) json_encode([
+                        'error' => 'access_denied', 'error_description' => self::BODY,
+                    ]))),
+                    'serverinfo without systemInfo' => Create::promiseFor(new Response(200, $json, '{}')),
+                    default => Create::promiseFor(new Response(200, $json, '{"systemInfo":{"version":"26.0.0"}}')),
+                };
             }
             if (self::$transport !== null) {
                 return (self::$transport)($req, $options);
@@ -357,9 +376,11 @@ final class AdminFacadeErrorLeakTest extends TestCase
         $e = self::invoke($call, $args);
 
         $why = [];
-        $reached = array_filter(self::sent(), static fn (string $s): bool => $want['reach'] === 'token'
-            ? $s === 'POST ' . self::TOKEN_PATH
-            : !str_ends_with($s, self::TOKEN_PATH) && $s !== 'GET /admin/serverinfo');
+        $reached = array_filter(self::sent(), static fn (string $s): bool => match ($want['reach']) {
+            'token' => $s === 'POST ' . self::TOKEN_PATH,
+            'serverinfo' => $s === 'GET /admin/serverinfo',
+            default => !str_ends_with($s, self::TOKEN_PATH) && $s !== 'GET /admin/serverinfo',
+        });
         if ($reached === []) {
             $why[] = '실패를 낼 자리에 안 닿았다(공허): ' . implode(', ', self::sent());
         }
