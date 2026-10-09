@@ -16,6 +16,7 @@ use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
 use Xzawed\Keycloak\Internal\PkceKeycloakProvider;
+use Xzawed\Keycloak\Internal\ResponseStalled;
 use Xzawed\Keycloak\Internal\ResponseTooLarge;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 use Xzawed\Keycloak\Token\AuthorizationRequest;
@@ -185,6 +186,8 @@ final class AuthClient
         }
         try {
             $body = TokenResponseCap::read($response->getBody());
+        } catch (ResponseStalled) {
+            throw new KeycloakTransportError('introspection response stalled before its end');   // 앞부분으로 판정하지 않는다
         } catch (\Throwable $e) {
             throw new KeycloakTransportError('introspection response could not be read', previous: SanitizedCause::of($e));
         }
@@ -240,6 +243,8 @@ final class AuthClient
         }
         try {
             $body = TokenResponseCap::read($response->getBody());
+        } catch (ResponseStalled) {
+            throw new KeycloakTransportError('logout response stalled before its end');   // 끝나지 않은 응답을 성공으로 읽지 않는다
         } catch (\Throwable $e) {
             throw new KeycloakTransportError('logout response could not be read', previous: SanitizedCause::of($e));
         }
@@ -279,6 +284,9 @@ final class AuthClient
             // 토큰 응답이 상한을 넘었다(`PkceKeycloakProvider`). ⚠️ 원인을 달지 않는다 — 그 예외의 트레이스는 league 의
             // `getAccessToken($grant, $options)` 프레임 인자(refresh_token·code)를 쥔다. 메시지는 SDK 가 만든 것이 전부다.
             throw new KeycloakTransportError($e->getMessage());
+        } catch (ResponseStalled) {
+            // 토큰 응답이 끝을 알리기 전에 막혔다(`TokenResponseCap::read` — 앞부분으로 판정하지 않는다). 원인을 달지 않는 까닭은 위와 같다.
+            throw new KeycloakTransportError('token response stalled before its end');
         } catch (\UnexpectedValueException $e) {
             // league는 토큰 엔드포인트가 비-JSON/파싱불가 응답을 줄 때 SPL \UnexpectedValueException을
             // 던진다(IdentityProviderException이 아님 — OAuth 에러 바디가 아니라 응답 자체가 깨진 경우).

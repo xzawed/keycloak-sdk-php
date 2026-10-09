@@ -24,7 +24,8 @@ use Psr\Http\Message\StreamInterface;
  * 전송을 끊고(CURLE_WRITE_ERROR) psr7 의 복사(스트림 핸들러)는 멈춘다 — 메모리뿐 아니라 **전송**이 상한 근처에서 끝난다.
  * curl 은 푼 바이트를 많아야 16,384 바이트(CURL_MAX_WRITE_SIZE) 청크로 넘기므로 끊기 전에 받은 것은 상한+1 을 넘는 청크 하나까지다
  * (싱크는 그 청크에서 상한+1 바이트까지만 담는다). (2) **판독기**(`read()`) — 그 본문을 한 번만, 많아야 상한+1 바이트까지 읽어
- * 넘었으면 null 이다. 판독기만이 판정한다 — 싱크를 쓰지 않는 길(PSR-18 `sendRequest()`, 소비자가 넘긴 핸들러)도 여기를 지난다.
+ * 넘었으면 null 이고, 끝을 알리기 전에 막히면 실패한다(`ResponseStalled`). 판독기만이 판정한다 — 싱크를 쓰지 않는 길(PSR-18
+ * `sendRequest()`, 소비자가 넘긴 핸들러)도 여기를 지난다.
  *
  * ⚠️ `'stream' => true` 로 바꾸지 않은 이유: Guzzle 은 그 요청을 curl 이 아니라 PHP 스트림 핸들러로 보낸다 — 연결 시간 제한
  * (`connect_timeout`)이 무시되고(실측: `connect_timeout` 1 초 · `timeout` 4 초에 닿지 않는 주소 — curl 1,018 ms, 스트림 4,004 ms),
@@ -55,7 +56,17 @@ final class TokenResponseCap
      * ⚠️ 청한 바이트의 **합**은 묶이지 않는다 — 청한 것보다 적게 주는 스트림이면 다시 청하므로 합이 상한+1 을 넘는다(실측: 한 번에 1 바이트씩
      * 주는 2,048 바이트 본문에 2,049 번 청해 합 16,785,408 · 가져온 2,048). 묶이는 것은 가져온 바이트와 한 번의 청이다.
      *
+     * ⚠️ 끝(EOF)이 아닌 빈 읽기에서 멈추고 **실패한다**(`ResponseStalled`) — 그때까지 읽은 바이트로 판정하지 않는다(`JwksStore::readCapped`
+     * 와 같은 규칙). 예전에는 그 빈 읽기에서 멈추고 앞부분을 돌려줘, EOF 를 알리지 않는 본문(소비자가 주입한 전송의 지연 본문)이 한 번
+     * 막히면 끝을 보지 못한 응답의 앞부분이 받아들여졌다(실측 2026-10-09: 1,000,000 바이트에서 한 번 막힌 2 MiB 토큰 응답을 — 막힘이
+     * 없으면 상한 초과 — 다섯 레인이 전부 받아들였다). 끝을 찾은 빈 읽기(PHP 스트림은 그 읽기 뒤에야 `eof()` 가 참이다)는 정상 끝이다.
+     * 청은 늘 1 바이트 이상이라 빈 읽기가 판독기 탓일 수는 없다.
+     *
      * ⚠️ 스트림의 읽기 오류는 그대로 던진다 — 받는 쪽이 자기 경계에서 SDK 오류로 바꾼다(그 예외의 트레이스 인자를 실어 내보내지 않게).
+     * 막힘도 같은 까닭으로 SDK 예외가 아니라 운반체다 — `JwksStore::readCapped` 와 달리 이 판독기는 league·Guzzle 의 프레임 **안에서도**
+     * 불리고(그 인자가 refresh_token·code·client_secret 을 쥔다), SDK 예외는 `SanitizedCause` 가 사본으로 바꾸지 않고 그대로 둔다.
+     *
+     * @throws ResponseStalled 끝이 아닌 빈 읽기
      */
     public static function read(StreamInterface $body): ?string
     {
@@ -64,11 +75,13 @@ final class TokenResponseCap
                 $body->rewind();
             }
             $buf = '';
+            $empty = false;
             while (!$body->eof()) {
-                $chunk = $body->read(min(self::READ_CHUNK_BYTES, self::TOKEN_RESPONSE_MAX_BYTES + 1 - \strlen($buf)));
-                if ($chunk === '') {
-                    break;   // 더 줄 것이 없다(Guzzle `Utils::copyToString` 과 같다) — 막힌 스트림에서 돌지 않는다
+                if ($empty) {
+                    throw new ResponseStalled();   // 빈 읽기 뒤에도 끝이 아니다 — 끝을 찾은 빈 읽기였다면 위 조건이 루프를 끝냈다
                 }
+                $chunk = $body->read(min(self::READ_CHUNK_BYTES, self::TOKEN_RESPONSE_MAX_BYTES + 1 - \strlen($buf)));
+                $empty = $chunk === '';
                 $buf .= $chunk;
                 if (\strlen($buf) > self::TOKEN_RESPONSE_MAX_BYTES) {
                     return null;
@@ -114,8 +127,8 @@ final class TokenResponseCap
     /**
      * admin 레인의 핸들러 스택 미들웨어 — `$isTokenRequest` 가 고르는 요청(fschmtt 의 토큰 부여)에만 싱크를 달고, 받은 본문을 판독기로
      * 한 번 읽어 같은 바이트의 새 본문으로 바꿔 넘긴다. 넘으면 그 요청을 Guzzle `RequestException`(메시지 `"$what exceeds 1048576
-     * bytes"`)으로 거부한다 — 요청은 여기서 끝나고 admin REST 요청은 나가지 않는다. 그 밖의 요청(사용자 목록처럼 정당하게 큰 admin
-     * 응답)은 건드리지 않는다.
+     * bytes"`)으로, 판독기가 끝을 보기 전에 막히면 같은 꼴(`"$what stalled before its end"`)으로 거부한다 — 요청은 여기서 끝나고 admin
+     * REST 요청은 나가지 않는다. 그 밖의 요청(사용자 목록처럼 정당하게 큰 admin 응답)은 건드리지 않는다.
      *
      * ⚠️ 거부가 SDK 예외가 아니라 Guzzle 의 것인 이유: 이 스택은 `AdminClient::raw()` 가 내보내는 fschmtt 클라이언트의 것이라, 여기서
      * 던진 것은 탈출구를 쓰는 소비자에게 **그대로** 닿는다(§4(b) — raw() 는 하위 클라이언트와 그것이 내는 오류를 내보낸다). 그래서
@@ -137,18 +150,24 @@ final class TokenResponseCap
             $sink = self::sink();
             $options['sink'] = $sink;
 
+            $exceeds = sprintf('%s exceeds %d bytes', $what, self::TOKEN_RESPONSE_MAX_BYTES);   // `ResponseTooLarge` 와 같은 꼴
+
             return self::promise($handler($request, $options))->then(
-                static function (ResponseInterface $response) use ($request, $what): ResponseInterface {
-                    $body = self::read($response->getBody());
+                static function (ResponseInterface $response) use ($request, $what, $exceeds): ResponseInterface {
+                    try {
+                        $body = self::read($response->getBody());
+                    } catch (ResponseStalled) {
+                        throw self::rejection($request, "$what stalled before its end");   // 운반체를 raw() 로 내보내지 않는다
+                    }
                     if ($body === null) {
-                        throw self::rejection($request, $what);
+                        throw self::rejection($request, $exceeds);
                     }
 
                     return $response->withBody(Utils::streamFor($body));
                 },
-                static function (mixed $reason) use ($request, $sink, $what): PromiseInterface {
+                static function (mixed $reason) use ($request, $sink, $exceeds): PromiseInterface {
                     if (self::overflowed($sink)) {
-                        throw self::rejection($request, $what);   // curl 이 짧은 쓰기에 끊은 전송(CURLE_WRITE_ERROR)
+                        throw self::rejection($request, $exceeds);   // curl 이 짧은 쓰기에 끊은 전송(CURLE_WRITE_ERROR)
                     }
 
                     return Create::rejectionFor($reason);
@@ -157,16 +176,16 @@ final class TokenResponseCap
         };
     }
 
-    /** 미들웨어의 상한 거부인가 — `Admin\ErrorTranslation` 이 다른 `RequestException`(전송 실패)과 가른다. */
+    /** 미들웨어의 거부(상한 초과·막힘)인가 — `Admin\ErrorTranslation` 이 다른 `RequestException`(전송 실패)과 가른다. */
     public static function isRejection(\Throwable $e): bool
     {
         return $e instanceof RequestException && ($e->getHandlerContext()[self::REJECTION] ?? null) === true;
     }
 
-    /** 상한 거부 — 요청만 달고(응답·원인 없음) 표시를 handler context 에 둔다. 메시지는 `ResponseTooLarge` 와 같은 꼴이다. */
-    private static function rejection(RequestInterface $request, string $what): RequestException
+    /** 미들웨어의 거부 — 요청만 달고(응답·원인 없음) 표시를 handler context 에 둔다. 메시지는 SDK 가 만든 문구뿐이다. */
+    private static function rejection(RequestInterface $request, string $message): RequestException
     {
-        return new RequestException(sprintf('%s exceeds %d bytes', $what, self::TOKEN_RESPONSE_MAX_BYTES), $request, null, null, [self::REJECTION => true]);
+        return new RequestException($message, $request, null, null, [self::REJECTION => true]);
     }
 
     /**

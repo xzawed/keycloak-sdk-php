@@ -62,6 +62,10 @@ final class FacadeDumpTest extends TestCase
             . '쥐어 탈출구가 없으므로 소비자가 쥘 수 없다(TokenResponseCapTest::testABodyOneByteOverTheCapFails 가 경계 밖 예외의 타입과 원인 '
             . '없음을 잰다). admin 레인은 raw() 가 하위 오류를 내보내므로 이것을 쓰지 않고 Guzzle RequestException 을 던진다'
             . '(TokenResponseCapTest::testAdminRawGetsLowerLibraryErrorsWhileTheFacadeKeepsItsError).',
+        \Xzawed\Keycloak\Internal\ResponseStalled::class => '토큰 응답 판독기가 끝을 알리기 전에 막혔다는 운반체 — TokenResponseCap::read 가 '
+            . '던지고 그것을 부르는 자리가 전부 받아 바꾼다: introspect·logout·ClientCredentialsTokenProvider 와 AuthClient::getAccessToken(league 레인)은 '
+            . '원인 없는 KeycloakTransportError 로, admin 미들웨어는 상한 거부와 같은 Guzzle RequestException 으로. 그래서 소비자가 쥘 수 없다'
+            . '(TokenResponseCapTest::testAStalledBodyFailsClosedOnEveryLaneWithoutACause 가 여덟 칸의 예외 타입과 원인 없음을 잰다).',
     ];
 
     /**

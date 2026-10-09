@@ -14,6 +14,7 @@ use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
+use Xzawed\Keycloak\Internal\ResponseStalled;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 
 final class ClientCredentialsTokenProvider implements TokenProvider
@@ -80,6 +81,8 @@ final class ClientCredentialsTokenProvider implements TokenProvider
         // 끊는 싱크는 `AuthClient`(league·introspect)와 admin 레인에만 있다(`TokenResponseCap`).
         try {
             $raw = TokenResponseCap::read($response->getBody());
+        } catch (ResponseStalled) {
+            throw new KeycloakTransportError('token response stalled before its end');   // 주입 전송의 지연 본문 — 앞부분으로 판정하지 않는다
         } catch (\Throwable $e) {
             throw new KeycloakTransportError('token response could not be read', previous: SanitizedCause::of($e));
         }

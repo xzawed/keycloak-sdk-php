@@ -83,8 +83,8 @@ final class ErrorTranslation
             throw new KeycloakTransportError('admin request unreachable', previous: SanitizedCause::of($e));
         } catch (RequestException $e) {
             if (TokenResponseCap::isRejection($e)) {
-                // admin 의 토큰 응답이 상한을 넘었다(`AdminClient` 의 미들웨어) — 토큰 부여에서 끝나 admin REST 요청은 나가지 않았다.
-                // 메시지는 그 미들웨어가 만든 상한 문구다. ⚠️ 원인을 달지 않는다 — 그 예외의 트레이스는 Guzzle `request()` 의
+                // admin 의 토큰 응답이 상한을 넘었거나 끝을 알리기 전에 막혔다(`AdminClient` 의 미들웨어) — 토큰 부여에서 끝나 admin
+                // REST 요청은 나가지 않았다. 메시지는 그 미들웨어가 만든 문구다. ⚠️ 원인을 달지 않는다 — 그 예외의 트레이스는 Guzzle `request()` 의
                 // `form_params`(client_secret) 프레임 인자를 쥔다.
                 throw new KeycloakTransportError($e->getMessage());
             }

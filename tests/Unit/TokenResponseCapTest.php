@@ -15,11 +15,17 @@ use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\HttpFactory;
+use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use GuzzleHttp\Psr7\Utils;
 use GuzzleHttp\Utils as GuzzleUtils;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\StreamInterface;
+use Xzawed\Keycloak\Admin\ErrorTranslation;
 use Xzawed\Keycloak\AuthClient;
 use Xzawed\Keycloak\ClientCredentialsTokenProvider;
 use Xzawed\Keycloak\Exception\KeycloakAdminError;
@@ -27,6 +33,7 @@ use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
 use Xzawed\Keycloak\Http\HttpOptions;
+use Xzawed\Keycloak\Internal\ResponseStalled;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\JwtValidator;
@@ -696,6 +703,209 @@ final class TokenResponseCapTest extends TestCase
                 self::assertInstanceOf(KeycloakTransportError::class, $e, "$lane: " . $e::class . ': ' . $e->getMessage());
                 self::assertSame($message, $e->getMessage(), $lane);
                 self::assertInstanceOf(SanitizedCause::class, $e->getPrevious(), "$lane: 원인은 정화된 사본이다");
+            }
+        }
+    }
+
+    /**
+     * `$content` 를 주되 `$stallAt` 바이트에서 빈 읽기를 내는 본문 — `$forever` 면 그 뒤로 매번, 아니면 한 번만 막히고 이어진다. 막힌
+     * 동안에도 `eof()` 는 거짓이고 끝을 찾은 빈 읽기 뒤에야 참이다(PHP 소켓처럼 — 다 받아 둔 임시 스트림도 그 읽기에서 EOF 를 안다).
+     * `$stallAt` 이 null 이면 막히지 않는다. 1,000 번을 읽으면 던진다 — 도는 판독기를 끝내는 안전핀이다(`JwksStoreTest` 와 같은 꼴).
+     *
+     * @param array{reads: int, empties: int} $count 읽은 횟수와 빈 읽기 횟수 — 이 본문이 센다
+     */
+    private static function stalling(string $content, ?int $stallAt, bool $forever, array &$count): StreamInterface
+    {
+        $ended = false;
+        $stalledOnce = false;
+        $inner = Utils::streamFor($content);
+
+        return FnStream::decorate($inner, [
+            'read' => static function (int $length) use ($inner, $stallAt, $forever, &$count, &$ended, &$stalledOnce): string {
+                if (++$count['reads'] > 1000) {
+                    throw new \LogicException('1,000 번을 읽고도 멈추지 않았다');
+                }
+                $at = $inner->tell();
+                if ($stallAt !== null && $at >= $stallAt && ($forever || !$stalledOnce)) {
+                    $stalledOnce = true;
+                    $count['empties']++;
+
+                    return '';   // 막혔다 — 줄 것이 없는데 끝도 아니다
+                }
+                $got = $inner->read($stallAt !== null && $at < $stallAt ? min($length, $stallAt - $at) : $length);
+                if ($got === '') {
+                    $count['empties']++;
+                    $ended = true;   // 끝을 찾은 빈 읽기 — 이 뒤로 eof() 가 참이다
+                }
+
+                return $got;
+            },
+            'eof' => static function () use (&$ended): bool {
+                return $ended;
+            },
+        ]);
+    }
+
+    /** 토큰·introspection 응답 꼴의 JSON 문서를 JSON 공백으로 `$size` 바이트에 맞춘다 — 문서 뒤 어디서 잘라도 앞부분은 받아들일 수 있다. */
+    private static function tokenDocument(int $size): string
+    {
+        $doc = '{"access_token":"tc-stall-token","token_type":"Bearer","expires_in":300,"active":true}';
+
+        return $doc . str_repeat(' ', max(0, $size - strlen($doc)));
+    }
+
+    /** 판독기 한 번의 결과 — 상한 이하면 `accepted <바이트>`, 넘었으면 `exceeds`, 던졌으면 `<예외 클래스>: <메시지>`. */
+    private static function readOutcome(StreamInterface $body): string
+    {
+        try {
+            $got = TokenResponseCap::read($body);
+
+            return $got === null ? 'exceeds' : 'accepted ' . strlen($got);
+        } catch (\Throwable $e) {
+            return $e::class . ': ' . $e->getMessage();
+        }
+    }
+
+    /**
+     * 끝(EOF)이 아닌 빈 읽기에서 판독기가 실패한다 — 그때까지 읽은 바이트(앞부분)로 판정하지 않는다(`JwksStore::readCapped` 와 같은
+     * 규칙). 수정 전에는 빈 읽기에서 멈추고 앞부분을 돌려줬다: 2 MiB 본문이 1,000,000 바이트에서 한 번 막히면 그 1,000,000 바이트를
+     * 받아들였다(막힘이 없으면 상한 초과 — 실측 2026-10-09). EOF 를 알리지 않는 본문은 소비자가 주입한 전송(PSR-18 을 받는
+     * `ClientCredentialsTokenProvider` · Guzzle 클라이언트를 받는 `AuthClient`)의 지연 본문이다.
+     *
+     * 끝을 찾은 빈 읽기 — PHP 스트림은 그 읽기 뒤에야 `eof()` 가 참이다 — 는 정상 끝이다. 그래서 받아들이는 본문은 예전에 받아들이던
+     * 것의 부분집합이다. 빈 읽기는 한 번이면 끝난다(돌지 않는다). 막힘을 나르는 `ResponseStalled` 는 내부 운반체다 — 레인마다 무엇으로
+     * 바뀌는지는 다음 시험이 본다.
+     */
+    public function testAnEmptyReadThatIsNotTheEndFailsInsteadOfJudgingThePrefix(): void
+    {
+        $doc = self::tokenDocument(96);
+        $stalled = ResponseStalled::class . ': response stalled before its end';
+        /** @var array<string, array{string, ?int, bool, string, int}> 칸 => [본문, 막히는 바이트(null = 막히지 않음), 막힘이 계속되는가, 기대 결과, 빈 읽기 수] */
+        $cases = [
+            'nothing, then stalls' => [$doc, 0, true, $stalled, 1],
+            'half a document, then stalls' => [$doc, 40, true, $stalled, 1],
+            'the whole document, then stalls' => [$doc, strlen($doc), true, $stalled, 1],
+            'a 2 MiB document stalls once at 1,000,000, then goes on' => [self::tokenDocument(2 * self::CAP), 1000000, false, $stalled, 1],
+            'the same 2 MiB document without the stall' => [self::tokenDocument(2 * self::CAP), null, false, 'exceeds', 0],
+            'the whole document, then the empty read that finds its end' => [$doc, null, false, 'accepted ' . strlen($doc), 1],
+            'exactly the cap, then the empty read that finds its end' => [self::tokenDocument(self::CAP), null, false, 'accepted ' . self::CAP, 1],
+        ];
+        foreach ($cases as $name => [$content, $stallAt, $forever, $want, $empties]) {
+            $count = ['reads' => 0, 'empties' => 0];
+            self::assertSame($want, self::readOutcome(self::stalling($content, $stallAt, $forever, $count)), "$name: 결과");
+            self::assertSame($empties, $count['empties'], "$name: 빈 읽기 수 — 막힌 본문도 한 번이면 끝나야 한다");
+        }
+    }
+
+    /**
+     * 전송을 주입해 부르는 레인 — 각 레인의 공개 호출 하나가 `$body` 가 내는 본문(상태 200 · JSON)을 받는다. `AuthClient` 는 Guzzle
+     * 클라이언트를, `ClientCredentialsTokenProvider` 는 PSR-18 클라이언트를 받는다. admin 은 전송을 주입받지 않으므로 그 스택의 미들웨어를
+     * (`AdminClient` 와 같은 인자로) 가짜 핸들러 위에 바로 쌓아, 탈출구(raw)가 받는 것과 파사드(`ErrorTranslation`)가 내는 것을 둘 다 본다.
+     *
+     * @param \Closure(): StreamInterface $body
+     * @return array<string, \Closure(): mixed>
+     */
+    private static function injectedLanes(\Closure $body): array
+    {
+        $respond = static fn (): ResponseInterface => new Response(200, ['Content-Type' => 'application/json'], $body());
+        $handler = static fn (): PromiseInterface => Create::promiseFor($respond());
+        $cfg = new KeycloakConfig('https://kc.test', 'r', 'c', 'tc-client-secret');
+        $http = new GuzzleClient(['handler' => HandlerStack::create($handler)] + HttpOptions::guzzle($cfg));
+        $ep = new OidcEndpoints($cfg);
+        $f = new HttpFactory();
+        $auth = new AuthClient($cfg, $ep, new JwtValidator($cfg, $ep, new JwksStore($ep->jwks(), $http, $f)), $http);
+        $psr18 = new class ($respond) implements ClientInterface {
+            /** @param \Closure(): ResponseInterface $respond */
+            public function __construct(private readonly \Closure $respond) {}
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                return ($this->respond)();
+            }
+        };
+        $admin = TokenResponseCap::middleware(static fn (RequestInterface $r): bool => true, 'admin token response')(
+            static fn (RequestInterface $r, array $o): PromiseInterface => $handler(),
+        );
+        $grant = static function () use ($admin): int {
+            $response = $admin(new Request('POST', 'https://kc.test/realms/r/protocol/openid-connect/token'), [])->wait();
+
+            return $response instanceof ResponseInterface ? strlen((string) $response->getBody()) : -1;
+        };
+
+        return [
+            'cc' => static fn (): mixed => $auth->clientCredentialsToken(),
+            'refresh' => static fn (): mixed => $auth->refresh('tc-refresh-token'),
+            'code' => static fn (): mixed => $auth->exchangeCode('tc-code', str_repeat('v', 64)),
+            'cctp' => static fn (): mixed => (new ClientCredentialsTokenProvider($cfg, $ep, $psr18, $f, $f))->getToken(),
+            'introspect' => static fn (): mixed => $auth->introspect('tc-token'),
+            'logout' => static function () use ($auth): mixed {
+                $auth->logout('tc-refresh-token');
+
+                return null;
+            },
+            'admin raw' => $grant,
+            'admin facade' => static fn (): mixed => ErrorTranslation::call($grant),
+        ];
+    }
+
+    /** 결과의 꼴 — 돌아왔으면 `returned`, 던졌으면 `<클래스>: <메시지> · <원인>`(원인이 없으면 `no cause`). */
+    private static function described(?\Throwable $e): string
+    {
+        if ($e === null) {
+            return 'returned';
+        }
+        $cause = $e->getPrevious();
+
+        return $e::class . ': ' . $e->getMessage() . ' · ' . ($cause === null ? 'no cause' : 'cause ' . $cause::class);
+    }
+
+    /**
+     * 막힌 본문은 어느 레인에서도 받아들여지지 않는다 — 그 레인의 상한 문구와 같은 꼴(`<본문 이름> stalled before its end`)의
+     * `KeycloakTransportError` 이고 원인을 달지 않는다(`ResponseTooLarge` 와 같은 까닭: 막힘은 league 의 `getAccessToken($grant,
+     * $options)`·Guzzle `request()` 프레임 **안에서** 판정되므로 그 운반체의 트레이스는 refresh_token·code·client_secret 을 인자로
+     * 쥔다). admin 의 탈출구(raw)에서는 상한 거부와 같은 Guzzle `RequestException`(같은 표시 · 응답·원인 없음)이고, 파사드는 그것을
+     * 원인 없는 `KeycloakTransportError` 로 바꾼다.
+     *
+     * 수정 전 실측(2026-10-09 · 주입 전송): 1,000,000 바이트에서 한 번 막힌 2 MiB 본문을 여덟 칸 전부 받아들였고(막힘이 없으면 상한
+     * 초과), 첫 바이트부터 막힌 본문은 logout 이 성공으로 돌아왔고 admin 은 빈 본문을 넘겼으며 나머지는 막힘을 IdP 의 응답 탓
+     * (`client-credentials failed` · `introspection returned non-JSON` · `token endpoint returned unexpected response`)으로 돌렸다.
+     * 대조: 같은 본문을 막힘 없이 주면 오늘의 결과 그대로다(2 MiB 는 상한 초과 · 4 KiB 는 수락).
+     */
+    public function testAStalledBodyFailsClosedOnEveryLaneWithoutACause(): void
+    {
+        /** @var array<string, array{int, ?int, bool, string, int}> 본문 => [바이트, 막히는 바이트(null = 막히지 않음), 막힘이 계속되는가, 기대(stalled · exceeds · returned), 빈 읽기 수] */
+        $bodies = [
+            '2 MiB, stalls once at 1,000,000' => [2 * self::CAP, 1000000, false, 'stalled', 1],
+            '4 KiB, stalls for good at the first byte' => [4096, 0, true, 'stalled', 1],
+            '2 MiB, no stall (control)' => [2 * self::CAP, null, false, 'exceeds', 0],
+            '4 KiB, no stall (control)' => [4096, null, false, 'returned', 1],
+        ];
+        $noun = [
+            'cc' => 'token response', 'refresh' => 'token response', 'code' => 'token response', 'cctp' => 'token response',
+            'introspect' => 'introspection response', 'logout' => 'logout response',
+            'admin raw' => 'admin token response', 'admin facade' => 'admin token response',
+        ];
+        $count = ['reads' => 0, 'empties' => 0];
+        foreach ($bodies as $bodyName => [$size, $stallAt, $forever, $kind, $empties]) {
+            $lanes = self::injectedLanes(static function () use ($size, $stallAt, $forever, &$count): StreamInterface {
+                return self::stalling(self::tokenDocument($size), $stallAt, $forever, $count);
+            });
+            self::assertSame(array_keys($noun), array_keys($lanes), '레인 목록');
+            foreach ($lanes as $lane => $call) {
+                $count = ['reads' => 0, 'empties' => 0];
+                $class = $lane === 'admin raw' ? RequestException::class : KeycloakTransportError::class;
+                $want = match ($kind) {
+                    'stalled' => "$class: {$noun[$lane]} stalled before its end · no cause",
+                    'exceeds' => "$class: {$noun[$lane]} exceeds 1048576 bytes · no cause",
+                    default => 'returned',
+                };
+                $e = self::thrown($call);
+                self::assertSame($want, self::described($e), "$lane · $bodyName");
+                self::assertSame($empties, $count['empties'], "$lane · $bodyName: 빈 읽기 수 — 막힘을 실제로 지났는가(공허 방지)");
+                if ($lane === 'admin raw' && $e instanceof RequestException) {
+                    self::assertTrue(TokenResponseCap::isRejection($e), "$bodyName: admin 의 거부는 상한 거부와 같은 표시를 단다");
+                    self::assertFalse($e->hasResponse(), "$bodyName: 받은 본문(토큰을 담는다)을 달지 않는다");
+                }
             }
         }
     }
