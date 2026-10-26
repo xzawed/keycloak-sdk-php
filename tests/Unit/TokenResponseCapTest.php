@@ -911,8 +911,10 @@ final class TokenResponseCapTest extends TestCase
     }
 
     /**
-     * 싱크는 상한+1 바이트까지만 담고 그 경계를 넘기는 청크에서 짧게 쓴다 — curl 은 짧은 쓰기에 전송을 끊고(CURLE_WRITE_ERROR),
-     * psr7 의 복사는 멈춘다. 그 뒤의 쓰기는 0 이다. 상한+1 번째 바이트를 담아 두는 것이 요점이다 — 판독기가 그것으로 「넘었다」를 안다.
+     * 싱크는 상한+1 바이트까지만 담고 그 바이트를 담는 쓰기를 하나 적게(짧게) 돌려준다 — curl 은 짧은 쓰기에 전송을 끊고
+     * (CURLE_WRITE_ERROR), psr7 의 복사는 멈춘다. 그 뒤의 쓰기는 0 이다. 상한+1 번째 바이트를 담아 두는 것이 요점이다 — 판독기가
+     * 그것으로 「넘었다」를 안다. 그 바이트 **하나만** 오는 쓰기도 짧다(0) — 정확히 상한+1 바이트를 보내고 멈춘 서버 앞에서 다음 바이트를
+     * 기다리지 않는다(`AdminResponseBodyTest::testATokenResponsePastTheCapThatStallsIsRefusedAtOnce` 가 전송으로 잰다).
      */
     public function testTheSinkHoldsAtMostTheCapPlusOneAndRefusesTheRest(): void
     {
@@ -927,7 +929,7 @@ final class TokenResponseCapTest extends TestCase
             }
         }
         self::assertSame(self::CAP + 1, $sink->getSize(), '싱크가 담은 바이트');
-        self::assertSame(self::CAP + 1, $accepted, '받아들였다고 돌려준 바이트');
+        self::assertSame(self::CAP, $accepted, '받아들였다고 돌려준 바이트 — 상한+1 번째 바이트를 담은 쓰기는 하나 적게 돌려준다');
         self::assertSame(0, $sink->write($chunk), '넘은 뒤의 쓰기');
         self::assertTrue(TokenResponseCap::overflowed($sink));
         self::assertNull(TokenResponseCap::read($sink));
@@ -935,6 +937,12 @@ final class TokenResponseCapTest extends TestCase
         $exact = TokenResponseCap::sink();
         self::assertSame(self::CAP, $exact->write(str_repeat('c', self::CAP)));
         self::assertFalse(TokenResponseCap::overflowed($exact));
-        self::assertSame(self::CAP, strlen((string) TokenResponseCap::read($exact)));
+        self::assertSame(0, $exact->write('d'), '상한+1 번째 바이트 하나만 오는 쓰기도 짧다');
+        self::assertTrue(TokenResponseCap::overflowed($exact), '그 바이트는 담는다');
+        self::assertNull(TokenResponseCap::read($exact));
+
+        $under = TokenResponseCap::sink();
+        self::assertSame(self::CAP, $under->write(str_repeat('e', self::CAP)));
+        self::assertSame(self::CAP, strlen((string) TokenResponseCap::read($under)));
     }
 }

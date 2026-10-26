@@ -21,7 +21,8 @@ use Psr\Http\Message\StreamInterface;
  * 75 MB · 그 밖 40 MB), memory_limit 보다 큰 본문은 잡을 수 없는 치명 오류(exit 255)로 프로세스를 끝냈다(실측 2026-10-03).
  *
  * 두 겹이다. (1) **싱크**(`sink()`) — Guzzle 이 응답 본문을 받아 적는 스트림을 상한+1 바이트에서 막는다. curl 은 짧은 쓰기에
- * 전송을 끊고(CURLE_WRITE_ERROR) psr7 의 복사(스트림 핸들러)는 멈춘다 — 메모리뿐 아니라 **전송**이 상한 근처에서 끝난다.
+ * 전송을 끊고(CURLE_WRITE_ERROR) psr7 의 복사(스트림 핸들러)는 멈춘다(psr7 2.11 이상 — `AdminResponseBody` 의 docblock) — 메모리뿐
+ * 아니라 **전송**이 상한 근처에서 끝난다.
  * curl 은 푼 바이트를 많아야 16,384 바이트(CURL_MAX_WRITE_SIZE) 청크로 넘기므로 끊기 전에 받은 것은 상한+1 을 넘는 청크 하나까지다
  * (싱크는 그 청크에서 상한+1 바이트까지만 담는다). (2) **판독기**(`read()`) — 그 본문을 한 번만, 많아야 상한+1 바이트까지 읽어
  * 넘었으면 null 이고, 끝을 알리기 전에 막히면 실패한다(`ResponseStalled`). 판독기만이 판정한다 — 싱크를 쓰지 않는 길(PSR-18
@@ -99,8 +100,11 @@ final class TokenResponseCap
     }
 
     /**
-     * Guzzle `sink` 요청 옵션에 넘기는 본문 스트림 — 상한+1 바이트까지만 담고, 그 경계를 넘기는 쓰기는 담은 만큼만 받았다고(짧게)
+     * Guzzle `sink` 요청 옵션에 넘기는 본문 스트림 — 상한+1 바이트까지만 담고, 그 바이트를 담는 쓰기는 담은 것보다 하나 적게(짧게)
      * 돌려준다. 그 뒤의 쓰기는 0 이다. 상한+1 번째 바이트를 담는 것이 요점이다 — 판독기가 그것으로 「넘었다」를 안다.
+     *
+     * ⚠️ 그 바이트를 담은 쓰기를 짧게 돌려주는 까닭: 다 받았다고 돌려주면 짧은 쓰기는 그 **다음** 바이트를 받을 때에야 생긴다 —
+     * 정확히 상한+1 바이트를 보내고 멈춘 서버 앞에서 두 전송 모두 읽기 타임아웃까지 붙들렸다(`AdminResponseBodyTest` 의 토큰 칸).
      */
     public static function sink(): StreamInterface
     {
@@ -112,8 +116,9 @@ final class TokenResponseCap
                 if ($room <= 0) {
                     return 0;
                 }
+                $written = $buffer->write(\strlen($data) <= $room ? $data : substr($data, 0, $room));
 
-                return $buffer->write(\strlen($data) <= $room ? $data : substr($data, 0, $room));
+                return self::overflowed($buffer) ? $written - 1 : $written;
             },
         ]);
     }
