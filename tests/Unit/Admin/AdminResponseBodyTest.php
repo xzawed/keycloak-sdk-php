@@ -372,7 +372,7 @@ final class AdminResponseBodyTest extends TestCase
 
     /**
      * 틀을 알린 2xx(Content-Length · chunked · gzip — Guzzle 이 푼 응답의 Content-Length 를 `X-Encoded-Content-Length` 로 옮긴다)는
-     * 본문 첫 바이트 전에 멈춰도 기다리지 않는다 — 머리에서 끝낸다(등록부의 A2: 201 + 알린 길이 뒤 멈춤). 스트림 처리기의 chunked 칸은
+     * 본문 첫 바이트 전에 멈춰도 기다리지 않는다 — 머리에서 끝낸다(재스캔 칸 A2: 201 + 알린 길이 뒤 멈춤 · #834). 스트림 처리기의 chunked 칸은
      * 없다 — PHP 의 http 래퍼가 청크를 풀며 `Transfer-Encoding` 을 머리에서 빼(`AdminResponseBody::framed` 의 docblock) 첫 바이트에서
      * 끊는 길로 가고, 바이트가 오지 않으면 고치기 전처럼 읽기 타임아웃까지 기다린다(실측 4,081 ms).
      *
@@ -830,8 +830,8 @@ final class AdminResponseBodyTest extends TestCase
     }
 
     /**
-     * 토큰 응답이 상한 + 1 바이트를 보내고 멈추면 곧바로 거부한다 — 그 바이트를 담은 쓰기에서 전송을 끊는다(등록부 T2 · php 만 읽기
-     * 타임아웃까지 기다렸다).
+     * 토큰 응답이 상한 + 1 바이트를 보내고 멈추면 곧바로 거부한다 — 그 바이트를 담은 쓰기에서 전송을 끊는다(재스캔 칸 T2: 상한 + 1 뒤
+     * 멈춘 토큰 응답 · #834 · php 만 읽기 타임아웃까지 기다렸다).
      *
      * @return array<string, array{string, string}>
      */
