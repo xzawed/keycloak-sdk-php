@@ -462,4 +462,164 @@ final class JwtValidatorTest extends TestCase
         $this->expectException(TokenValidationError::class);
         $validator->validate($this->sign($this->goodClaims()));
     }
+
+    /**
+     * PHP2Shell(CVE-2026-109618 · CVE-2026-109619)은 공격자가 일으키는 OOM 치명 오류를 트리거로 쓴다 — 서명을 보기
+     * 전의 이 경로가 토큰 길이에 비례해 할당하면 그 트리거가 된다. 상한이 없을 때 `bomb('header', '[0],', …)` 모양은 토큰 바이트당
+     * 약 95 B 를 할당했고, 1.5 MiB 하나가 `memory_limit=128M` 에서 치명 오류로 요청을 끝냈다(실측 2026-10-27).
+     */
+    public function testRejectsATokenOverTheCapBeforeDecodingItOrFetchingKeys(): void
+    {
+        $cfg = new KeycloakConfig(serverUrl: 'https://kc:8080', realm: 'it-realm', clientId: 'it-client');
+        $http = new class ($this->key['jwk']) implements ClientInterface {
+            public int $hits = 0;
+
+            /** @param array<string,mixed> $jwk */
+            public function __construct(private array $jwk) {}
+
+            public function sendRequest(RequestInterface $r): ResponseInterface
+            {
+                ++$this->hits;
+
+                return new Response(200, [], json_encode(['keys' => [$this->jwk]], JSON_THROW_ON_ERROR));
+            }
+        };
+        $store = new JwksStore('https://kc:8080/realms/it-realm/protocol/openid-connect/certs', $http, new HttpFactory());
+        $validator = new JwtValidator($cfg, new OidcEndpoints($cfg), $store);
+        $token = self::bomb('header', '[0],', JwtValidator::JWT_MAX_BYTES + 64);
+        self::assertGreaterThan(JwtValidator::JWT_MAX_BYTES, \strlen($token));
+
+        $peak = self::peakDuring(static function () use ($validator, $token): void {
+            try {
+                $validator->validate($token);
+                self::fail('a token over the cap must be rejected');
+            } catch (TokenValidationError $e) {
+                self::assertSame(sprintf('token exceeds %d bytes', JwtValidator::JWT_MAX_BYTES), $e->getMessage());
+            }
+        });
+
+        self::assertLessThan(1 << 20, $peak, 'the cap must reject before anything proportional to the token is allocated');
+        self::assertSame(0, $http->hits, 'a token over the cap must not cost a JWKS request');
+    }
+
+    public function testTheCapIsInclusive(): void
+    {
+        $validator = $this->validator();
+        $atCap = str_repeat('a', JwtValidator::JWT_MAX_BYTES - 2) . '..';
+
+        try {
+            $validator->validate($atCap);
+            self::fail('garbage must be rejected');
+        } catch (TokenValidationError $e) {
+            self::assertSame('invalid JWT header', $e->getMessage());   // 상한이 아니라 그다음 검사가 거부했다
+        }
+
+        try {
+            $validator->validate('a' . $atCap);
+            self::fail('a token one byte over the cap must be rejected');
+        } catch (TokenValidationError $e) {
+            self::assertSame(sprintf('token exceeds %d bytes', JwtValidator::JWT_MAX_BYTES), $e->getMessage());
+        }
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function signedTokenLengths(): iterable
+    {
+        yield 'the longest bearer Keycloak 26.6 accepts by default' => [65459];   // `.claude/rules/security.md`
+        yield 'the cap' => [JwtValidator::JWT_MAX_BYTES];
+    }
+
+    #[DataProvider('signedTokenLengths')]
+    public function testASignedTokenUpToTheCapStillValidates(int $length): void
+    {
+        // 상한이 정상 토큰을 거부하지 않는다 — 클레임이 큰(그룹·역할이 많은 사용자) 진짜 서명 토큰.
+        $claims = $this->goodClaims();
+        $n = intdiv(($length - \strlen($this->sign($claims))) * 3, 4);
+        do {
+            $claims['pad'] = str_repeat('a', $n--);
+            $token = $this->sign($claims);
+        } while (\strlen($token) > $length);
+        self::assertGreaterThan($length - 8, \strlen($token));
+
+        self::assertSame('s1', $this->validator()->validate($token)->subject);
+    }
+
+    public function testADotsOnlyTokenIsRejectedWithoutSplittingIt(): void
+    {
+        // explode 는 조각마다 값을 하나씩 만든다 — 점만으로 된 상한 길이 토큰에 6.3 MB 였다(실측). 점을 먼저 센다.
+        $validator = $this->validator();
+        $token = str_repeat('.', JwtValidator::JWT_MAX_BYTES);
+
+        $peak = self::peakDuring(static function () use ($validator, $token): void {
+            try {
+                $validator->validate($token);
+                self::fail('a token of dots must be rejected');
+            } catch (TokenValidationError $e) {
+                self::assertSame('malformed JWT', $e->getMessage());
+            }
+        });
+
+        self::assertLessThan(1 << 20, $peak, 'the dot count must be checked before explode() makes a value per segment');
+    }
+
+    /** @return iterable<string, array{string, string}> */
+    public static function worstKnownShapes(): iterable
+    {
+        $nested = str_repeat('[', 500) . '0' . str_repeat(']', 500) . ',';   // 머리 객체 + "x" 배열 + 500 ≤ json 깊이 512
+
+        yield 'header, a wide array of [0]' => ['header', '[0],'];
+        yield 'header, arrays nested 500 deep' => ['header', $nested];
+        yield 'payload, arrays nested 500 deep' => ['payload', $nested];
+    }
+
+    #[DataProvider('worstKnownShapes')]
+    public function testTheWorstKnownShapesAtTheCapStayUnderAQuarterOfTheDefaultMemoryLimit(string $where, string $unit): void
+    {
+        // 상한이 그 근거를 지키는가 — 상한 길이의 가장 비싼 모양이 끝까지 디코드돼도 기본 `memory_limit`(128M)의 1/4 아래다.
+        // 상한을 올리거나(1 MiB 였다면 헤더 [0] 모양이 약 101 MB) 사전 게이트가 디코드한 헤더를 쥔 채 firebase 를 부르면
+        // (중첩 헤더가 42.7 MB) 이 시험이 먼저 빨개진다(실측 2026-10-27).
+        $validator = $this->validator();
+        $token = self::bomb($where, $unit, JwtValidator::JWT_MAX_BYTES);
+        self::assertGreaterThan(JwtValidator::JWT_MAX_BYTES - 2048, \strlen($token));
+
+        $peak = self::peakDuring(static function () use ($validator, $token): void {
+            try {
+                $validator->validate($token);
+                self::fail('a forged token must be rejected');
+            } catch (TokenValidationError $e) {
+                self::assertStringContainsString('Signature verification failed', $e->getMessage());   // 끝까지 디코드했다
+            }
+        });
+
+        self::assertLessThan(32 << 20, $peak, 'at the cap a known worst shape must stay under a quarter of the default memory_limit');
+    }
+
+    /** `$f` 를 도는 동안 늘어난 최대 메모리(바이트). */
+    private static function peakDuring(callable $f): int
+    {
+        gc_collect_cycles();
+        $before = memory_get_usage();
+        memory_reset_peak_usage();
+        $f();
+
+        return memory_get_peak_usage() - $before;
+    }
+
+    /**
+     * alg·kid 가 맞아 서명 검증까지 가는 폭탄 토큰 — `$unit` 을 JSON 배열 `x` 에 채워 헤더나 페이로드에 싣는다.
+     * 길이는 `$len` 이하에서 가장 가깝다(한 단위만큼 모자랄 수 있다).
+     */
+    private static function bomb(string $where, string $unit, int $len): string
+    {
+        $b64 = static fn (string $s): string => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+        $n = intdiv(intdiv($len * 3, 4), \strlen($unit));
+        do {
+            $x = '"x":[' . rtrim(str_repeat($unit, max(1, $n--)), ',') . ']';
+            $token = $where === 'header'
+                ? $b64('{"alg":"RS256","kid":"test-kid",' . $x . '}') . '.' . $b64('{}') . '.' . $b64('sig')
+                : $b64('{"alg":"RS256","kid":"test-kid"}') . '.' . $b64('{' . $x . '}') . '.' . $b64('sig');
+        } while (\strlen($token) > $len);
+
+        return $token;
+    }
 }

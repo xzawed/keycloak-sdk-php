@@ -19,6 +19,19 @@ use Xzawed\Keycloak\Token\ValidatedToken;
  */
 final class JwtValidator
 {
+    /**
+     * 받는 JWT 의 바이트 상한 — 넘으면 **어떤 분해·디코드보다 먼저** 거부한다.
+     *
+     * 이 경로는 서명을 보기 전에 토큰을 쪼개고 헤더·페이로드를 json_decode 한다. 상한이 없을 때 깊게 중첩한 JSON 배열을
+     * 실은 헤더는 토큰 바이트당 약 167 B 를 할당했고, 768 KiB 토큰 하나가 기본 `memory_limit` 128M 에서 치명 OOM 으로
+     * 요청을 끝냈다(넓은 배열이면 약 95 B · 1.5 MiB, 실측). 공격자가 일으키는 OOM 치명 오류는 PHP2Shell(CVE-2026-109618 · CVE-2026-109619)의 트리거이고, 패치된
+     * PHP 에서도 요청을 죽이는 DoS 다. 256000 은 .NET SDK 가 쓰는 Microsoft.IdentityModel 의 `DefaultMaximumTokenSizeInBytes`
+     * 와 같고, Keycloak 26.6 이 기본 설정으로 받는 가장 긴 Bearer(65,459 B)의 약 3.9 배다. 이 길이에서 잰 가장 비싼 모양
+     * (깊이 500 으로 중첩한 배열, 바이트당 약 86 B)은 22 MB 남짓이다 — `JwtValidatorTest` 가 기본 한도의 1/4 아래를
+     * 단언하므로 상한을 올리면 그 시험이 먼저 빨개진다.
+     */
+    public const JWT_MAX_BYTES = 256000;
+
     public function __construct(
         private readonly KeycloakConfig $config,
         private readonly OidcEndpoints $endpoints,
@@ -60,6 +73,11 @@ final class JwtValidator
      */
     private function verify(#[\SensitiveParameter] string $jwt, string $expectedAud): ValidatedToken
     {
+        // (0) 길이 상한 — 아래 어느 단계든 토큰 길이에 비례해 할당하기 전에(`JWT_MAX_BYTES`).
+        if (\strlen($jwt) > self::JWT_MAX_BYTES) {
+            throw new TokenValidationError(sprintf('token exceeds %d bytes', self::JWT_MAX_BYTES));
+        }
+
         // (1) 헤더 사전 게이트 — firebase 디코드 이전에 우리가 직접 첫 세그먼트를 파싱해 alg를
         // RS256로 핀하고 none/미서명/다른 alg를 즉시 거부한다. firebase의 &$headers out-param은
         // 디코드가 *성공한 후에만* 채워지므로 사전 게이트로 쓸 수 없다(순서 함정).
@@ -72,6 +90,9 @@ final class JwtValidator
         if ($kid === null) {
             throw new TokenValidationError('missing kid');
         }
+        // ⚠️ 헤더 배열은 여기서 놓는다 — firebase 가 헤더를 다시 디코드하는 동안 둘이 함께 살면 할당이 두 배다
+        // (깊이 500 중첩 배열 헤더가 상한 길이에서 42 MB → 21 MB, 실측).
+        unset($header);
 
         // (2) JWKS에서 kid로 키 조회(DoS-safe, JwksStore) → firebase Key → 서명/exp/nbf 검증(클록 스큐 적용)
         $jwk = $this->jwks->getKeyByKid($kid);
@@ -129,10 +150,11 @@ final class JwtValidator
     /** @return array<string,mixed> */
     private function decodeHeader(#[\SensitiveParameter] string $jwt): array
     {
-        $parts = explode('.', $jwt);
-        if (count($parts) !== 3) {
+        // 점을 먼저 센다 — explode 는 조각마다 값을 하나씩 만들어, 점만으로 된 토큰이 길이의 약 25 배를 썼다(실측).
+        if (substr_count($jwt, '.') !== 2) {
             throw new TokenValidationError('malformed JWT');
         }
+        $parts = explode('.', $jwt);
         $decoded = json_decode(FbJwt::urlsafeB64Decode($parts[0]), true);
         if (!is_array($decoded)) {
             throw new TokenValidationError('invalid JWT header');
