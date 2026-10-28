@@ -57,7 +57,8 @@ use Xzawed\Keycloak\OidcEndpoints;
  * 적재·조립은 본문 판정의 몫이 아니다.
  *
  * 실제 HTTP 칸은 전송 둘을 돈다 — `curl`(ext-curl 이 있으면 Guzzle 이 고르는 기본)과 `stream`(ext-curl 이 없는 설치에서 Guzzle 이
- * 고르는 `StreamHandler` — composer.json 은 ext-curl 을 요구하지 않는다). 둘은 상한을 다른 갈래로 지난다: curl 은 싱크의 짧은
+ * 고르는 `StreamHandler` — composer.json 이 ext-curl 을 요구해도 Composer 는 설치 때만 묻고, `--ignore-platform-req` 설치·주입한
+ * 클라이언트는 여전히 이 길이다). 둘은 상한을 다른 갈래로 지난다: curl 은 싱크의 짧은
  * 쓰기에 전송을 끊어 요청이 **거부**되고(CURLE_WRITE_ERROR → `overflowed()`), stream 은 psr7 복사가 멈춰 상한+1 바이트를 담은
  * 응답이 **이행**된다(판독기가 null). 수정 전에는 이 시험이 curl 로만 돌았다 — `StreamHandler::__invoke` 를 부숴도 91 칸이 다
  * 초록이었다(실측 2026-10-09).

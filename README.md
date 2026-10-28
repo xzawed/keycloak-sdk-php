@@ -12,6 +12,7 @@ Part of a **nine-language polyglot SDK** (Java · Python · Node · Go · C# · 
 
 - PHP **8.3+** (`composer.json` requires `^8.3`)
   - ⚠️ Run a PHP build that carries the PHP2Shell fixes (CVE-2026-109618 / CVE-2026-109619) — **8.3.36, 8.4.27, 8.5.12** or later, or your distribution's patched package. The SDK cannot protect an unpatched interpreter, and Composer cannot enforce this for you: distributions backport the fix without changing the version PHP reports, so a version floor in `composer.json` would also reject patched servers.
+- The `curl` extension — `composer.json` requires `ext-curl` (`1.5.0` and earlier did not). Without it Guzzle falls back to PHP's stream wrapper, which reads a response header line of any length. ⚠️ Composer checks extensions when it installs, not at run time (its default `platform-check` covers only the PHP version).
 - Keycloak server 26.6.x (verified by the integration suite)
 
 ## Install
