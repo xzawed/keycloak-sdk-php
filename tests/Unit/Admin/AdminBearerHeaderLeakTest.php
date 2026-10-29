@@ -36,6 +36,8 @@ use Xzawed\Keycloak\Exception\SanitizedCause;
  * fschmtt 가 그것을 받아 두고 Bearer 로 실으려다 psr7 에서 터졌다(LF·CR·CRLF 셋 다 원인 메시지에 토큰 원문). sodium 이 있으면 lcobucci 가
  * 먼저 거부한다(`CannotDecodeContent`, 메시지 보류). 그래서 여기서는 lcobucci 의 해석을 건너뛴 토큰을 저장소에 직접 넣어 **그 자리**를
  * 확장과 무관하게 잰다. NUL 은 lcobucci 가 어디서나 거부하지만 psr7 도 거부하는 글자라 같은 칸에 둔다.
+ * 2026-10-29 부터 그 실제 경로는 닫혔다 — Bearer 문법(`Internal\BearerToken::grantMiddleware`)이 fschmtt 가 받아 두기 전에 그런 토큰
+ * 응답을 거부한다(`AdminBearerGrammarTest`). 이 시험은 저장소에 직접 넣은 토큰으로 psr7 의 자리를 계속 잰다.
  *
  * ⚠️ 하네스 상태는 정적이다 — 토큰은 인자로도 인스턴스 프로퍼티로도 넘기지 않는다(트레이스 인자에 실려 `var_dump` 가 따라간다).
  */

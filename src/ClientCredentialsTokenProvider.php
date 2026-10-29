@@ -13,6 +13,7 @@ use Xzawed\Keycloak\Token\TokenSet;
 use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
+use Xzawed\Keycloak\Internal\BearerToken;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
 use Xzawed\Keycloak\Internal\ResponseStalled;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
@@ -96,7 +97,22 @@ final class ClientCredentialsTokenProvider implements TokenProvider
 
             throw new KeycloakAuthError('client-credentials failed', oauthError: $oauth);
         }
-        return TokenSet::fromArray(self::stringKeyed($json));
+        $set = TokenSet::fromArray(self::stringKeyed($json));
+        // Bearer 문법(`BearerToken`) — 밖이면 캐시하지 않는다(다음 호출이 다시 묻는다). 안이면 다듬은 값을 캐시한다.
+        $token = BearerToken::sendable($set->accessToken);
+        if ($token === null) {
+            throw new KeycloakAuthError(BearerToken::PROVIDER_REFUSED);
+        }
+
+        return $token === $set->accessToken ? $set : new TokenSet(
+            accessToken: $token,
+            tokenType: $set->tokenType,
+            expiresIn: $set->expiresIn,
+            refreshToken: $set->refreshToken,
+            idToken: $set->idToken,
+            scope: $set->scope,
+            expiresAt: $set->expiresAt,
+        );
     }
 
     /**

@@ -20,6 +20,7 @@ use Xzawed\Keycloak\Exception\KeycloakForbiddenError;
 use Xzawed\Keycloak\Exception\KeycloakNotFoundError;
 use Xzawed\Keycloak\Exception\KeycloakTransportError;
 use Xzawed\Keycloak\Exception\SanitizedCause;
+use Xzawed\Keycloak\Internal\BearerToken;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 
@@ -87,6 +88,12 @@ final class ErrorTranslation
                 // REST 요청은 나가지 않았다. 메시지는 그 미들웨어가 만든 문구다. ⚠️ 원인을 달지 않는다 — 그 예외의 트레이스는 Guzzle `request()` 의
                 // `form_params`(client_secret) 프레임 인자를 쥔다.
                 throw new KeycloakTransportError($e->getMessage());
+            }
+            if (BearerToken::isRejection($e)) {
+                // admin 의 토큰 부여가 Bearer 문법 밖의 access token 을 줬다(`AdminClient` 의 미들웨어) — fschmtt 가 받아 두기 전에 거부해
+                // 캐시되지 않았고 admin REST 요청은 나가지 않았다. 타입은 쓸 수 없는 부여가 내던 것(상태 없는 `KeycloakAdminError`)이다.
+                // ⚠️ 원인을 달지 않는다 — 위와 같은 이유.
+                throw new KeycloakAdminError($e->getMessage());
             }
             throw new KeycloakTransportError('admin request failed', previous: SanitizedCause::of($e));
         } catch (BuilderException $e) {

@@ -12,6 +12,7 @@ use GuzzleHttp\HandlerStack;
 use Psr\Http\Message\RequestInterface;
 use Xzawed\Keycloak\Http\HttpOptions;
 use Xzawed\Keycloak\Internal\AdminResponseBody;
+use Xzawed\Keycloak\Internal\BearerToken;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
@@ -34,7 +35,9 @@ final class AdminClient
         // 토큰 응답 상한(`TokenResponseCap`) — fschmtt 가 토큰을 받는 요청에만 걸고 admin REST 응답(사용자 목록 등)은 건드리지 않는다.
         // admin REST 응답 본문(`AdminResponseBody`)은 그 나머지 요청에 — 읽지 않는 2xx 본문은 받지 않고 오류 본문은 상한에서 자른다.
         // 둘 다 맨 안쪽(`push`)이라 http_errors 보다 먼저 본문을 받는다 — 오류 상태의 본문도 상한을 지난다.
+        // Bearer 문법(`BearerToken`)은 그 바깥 — 상한이 판정한 토큰 응답에서 fschmtt 가 받아 두기 전에 access token 을 거부한다.
         $stack = HandlerStack::create();
+        $stack->push(BearerToken::grantMiddleware(self::isTokenGrant(...)), 'bearer_grammar');
         $stack->push(TokenResponseCap::middleware(self::isTokenGrant(...), 'admin token response'), 'token_response_cap');
         $stack->push(AdminResponseBody::middleware(self::isTokenGrant(...)), 'admin_response_body');
         $guzzle = new GuzzleClient(['handler' => $stack] + HttpOptions::guzzle($config));
