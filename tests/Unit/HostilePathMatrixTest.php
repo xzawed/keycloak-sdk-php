@@ -307,6 +307,50 @@ final class HostilePathMatrixTest extends TestCase
         if ($fails !== []) {
             self::fail(implode("\n", $fails) . "\n" . $classLine . "\n" . implode("\n", $judged['summary']));
         }
+        // attest — **모든 단언 뒤**(위 fail 이 던지면 여기 오지 않는다). 대조는 scripts/check-hp-attest.mjs.
+        self::attest(count($rows), $counts, count($cells), $hand['compared']);
+    }
+
+    /**
+     * 이 행렬이 **이 실행에서 실제로 돌았다**는 증명을 `$HP_ATTEST_DIR/php.json` 에 쓴다 — CI 는 단위 테스트 단계 바로 뒤에서
+     * 같은 nonce(`HP_ATTEST_NONCE`)로 `scripts/check-hp-attest.mjs` 가 읽는다. 레인이 초록이라는 것은 행렬이 돌았다는 증거가
+     * 아니다(`--filter` · 건너뛴 W1). `HP_ATTEST_DIR` 이 없으면(로컬) 아무것도 하지 않는다. ⚠️ 부르는 쪽은 **모든 단언 뒤**에만
+     * 부른다 — 실패한 행렬은 파일을 남기지 않는다. `knownGaps` 는 `knownGaps()` **값**(`id: 이유`)의 앞마디 — `KNOWN_GAP_GROUPS`
+     * 를 펼친 그 값이고, 정적 대조(check-known-gaps.mjs)가 못 보는 계산된 id 까지 런타임 값으로 낸다.
+     *
+     * @param array<string, int> $counts
+     */
+    private static function attest(int $rows, array $counts, int $w3, bool $w1): void
+    {
+        $dir = getenv('HP_ATTEST_DIR');
+        if ($dir === false || $dir === '') {
+            return;
+        }
+        $classes = [];
+        foreach (self::CLASSES as $c) {
+            $classes[$c] = $counts[$c] ?? 0;
+        }
+        $gaps = array_values(array_unique(array_map(
+            static fn (string $v): string => trim(explode(':', $v, 2)[0]),
+            array_values(self::knownGaps()),
+        )));
+        sort($gaps, SORT_STRING);
+        $nonce = getenv('HP_ATTEST_NONCE');
+        $body = [
+            'lang' => 'php',
+            'nonce' => $nonce === false ? '' : $nonce,
+            'rows' => $rows,
+            'classes' => $classes,
+            'w3' => $w3,
+            'w1' => $w1,
+            'knownGaps' => $gaps,
+        ];
+        if (!is_dir($dir) && !mkdir($dir, 0o777, true) && !is_dir($dir)) {
+            self::fail("attest 디렉터리를 만들지 못했다(HP_ATTEST_DIR=$dir)");
+        }
+        if (file_put_contents($dir . DIRECTORY_SEPARATOR . 'php.json', json_encode($body, JSON_THROW_ON_ERROR)) === false) {
+            self::fail("attest 를 쓰지 못했다(HP_ATTEST_DIR=$dir)");
+        }
     }
 
     /** @return array<string, list<string>> 경고 => 그것을 낸 칸·행(`noteWarnings` 가 채운다) */
@@ -1712,7 +1756,8 @@ final class HostilePathMatrixTest extends TestCase
     /**
      * @param array<string, array{label:string, class:class-string, method:string, cls:string, reqs:string, recv:string, outcome:string, note:string, sent:list<array{0:string,1:string,2:string}>}> $rows
      * @param array{a:list<string>, b:list<string>, c:list<string>} $tgt
-     * @return array{line:string, fails:list<string>}
+     * @return array{line:string, fails:list<string>, compared:bool} compared — 보안 기본값 가드 대조까지 **실제로 돌았는가**
+     *         (attest 의 w1 — 저장소 밖에서 건너뛴 실행은 증명이 아니다)
      */
     private static function checkHand(array $rows, array $tgt): array
     {
@@ -1791,7 +1836,7 @@ final class HostilePathMatrixTest extends TestCase
         }
 
         return ['line' => sprintf('W1 손 목록 %d 항목 · 앵커 %d — calls() 의 SDK 공개 호출 %d · 보안 기본값 가드의 PHP 행위 앵커 %d 와 대조', count(self::HAND), count($anchors), $nCalls, count($found)),
-            'fails' => $fails];
+            'fails' => $fails, 'compared' => $script !== false];
     }
 
     /** `tests/Unit` 아래 파일의 테스트 클래스에서 메서드 본문(없으면 null). 클래스는 경로에서 얻고, 파일이 맞는지 대조한다. */
