@@ -13,7 +13,7 @@ final class GroupsResource
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
     /**
-     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     * ⚠️ The fschmtt client holds the credentials, so a dump printed the client secret verbatim (measured 2026-09-26).
      *
      * @return array<string, mixed>
      */
@@ -22,7 +22,7 @@ final class GroupsResource
         return ['realm' => $this->realm];
     }
 
-    /** ⚠️ 보내는 representation 은 가린다(update 도) — 실패 오류의 트레이스 인자로 찍히지 않게(`UsersResource::create` 와 같은 규칙). */
+    /** ⚠️ The representation being sent is hidden (update too) — so it is not printed as a trace argument of a failure error (the same rule as `UsersResource::create`). */
     public function create(#[\SensitiveParameter] Group $group): void
     {
         ErrorTranslation::call(fn () => $this->kc->groups()->create($this->realm, $group));
@@ -43,7 +43,7 @@ final class GroupsResource
         ErrorTranslation::call(fn () => $this->kc->groups()->delete($this->realm, $groupId));
     }
 
-    /** void — fschmtt Groups::update 도 void. 자매 언어와 동형. */
+    /** void — fschmtt Groups::update is void too. Isomorphic with the sister languages. */
     public function update(string $groupId, #[\SensitiveParameter] Group $group): void
     {
         ErrorTranslation::call(fn () => $this->kc->groups()->update($this->realm, $groupId, $group));

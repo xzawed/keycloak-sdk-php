@@ -8,12 +8,12 @@ use Xzawed\Keycloak\Exception\KeycloakAuthError;
 use Xzawed\Keycloak\Masking;
 
 /**
- * ⚠️ 마스킹을 __toString 에만 걸면 PHP 의 **기본 직렬화기**가 그것을 우회한다 — 승격된
- * 프로퍼티가 public 이라 json_encode() 가 원문을 뱉는다. 그래서 JsonSerializable 을 함께 구현한다.
- * 한계: __debugInfo() 가 var_dump()/print_r()/debug_zval_dump() 를 덮지만 **var_export() 는
- * 덮지 못한다**(PHP 8.3.32 실측 — private 프로퍼티까지 원문으로 찍는다). get_object_vars()·
- * (array) 캐스트·foreach·공개 프로퍼티 읽기도 경계 밖이다. 과대광고하지 말 것 — 이것은
- * 우발적 로깅에 대한 심층 방어이지 기밀 경계가 아니다.
+ * ⚠️ If masking is applied only in __toString, PHP's **default serializer** bypasses it — the promoted
+ * properties are public, so json_encode() emits the raw values. So JsonSerializable is implemented as well.
+ * Limit: __debugInfo() covers var_dump()/print_r()/debug_zval_dump() but **cannot cover
+ * var_export()** (measured on PHP 8.3.32 — it prints even private properties verbatim). get_object_vars(),
+ * an (array) cast, foreach and reading the public properties are also outside the boundary. Do not oversell this — it is
+ * defence in depth against accidental logging, not a confidentiality boundary.
  */
 final readonly class TokenSet implements \JsonSerializable
 {
@@ -35,10 +35,11 @@ final readonly class TokenSet implements \JsonSerializable
     }
 
     /**
-     * ⚠️ `$r` 는 토큰 응답 전체다 — 아래 거부가 던지는 예외의 트레이스 #0 이 이 프레임이라, 속성이 없으면
-     * `var_dump($e)` 가 refresh/id 토큰을 원문으로 찍었다(실측 2026-09-26, access_token 이 숫자인 응답).
+     * ⚠️ `$r` is the whole token response — trace #0 of the exception the rejection below throws is this frame, so without
+     * the attribute `var_dump($e)` printed the refresh/id tokens verbatim (measured 2026-09-26, a response whose
+     * access_token was a number).
      *
-     * @param array<string,mixed> $r OAuth 토큰 응답
+     * @param array<string,mixed> $r OAuth token response
      */
     public static function fromArray(#[\SensitiveParameter] array $r, ?int $now = null): self
     {
@@ -88,12 +89,11 @@ final readonly class TokenSet implements \JsonSerializable
     }
 
     /**
-     * ⚠️ **만료 시각을 모르면 "만료됨"이다**(fail-safe — 자매 여덟과 동형, Java 의 M.6).
+     * ⚠️ **An unknown expiry time means "expired"** (fail-safe — isomorphic with the eight siblings, Java's M.6).
      *
-     * `false`(=아직 살아있다)를 돌려주면 `ClientCredentialsTokenProvider` 가 만료 시각 미상인
-     * 토큰을 **영원히 캐시에서 재사용**한다(그 자리의 조건이 `!$this->cached->isExpired(...)` 다).
-     * `expiresAt` 이 null 인 경우는 서버가 `expires_in` 을 안 보냈을 때뿐이라 정상 경로가 아니고,
-     * 그때 취할 안전한 쪽은 "재발급"이다.
+     * If it returns `false` (= still alive), `ClientCredentialsTokenProvider` **reuses a token of unknown expiry from the
+     * cache forever** (the condition there is `!$this->cached->isExpired(...)`). `expiresAt` is null only when the server
+     * did not send `expires_in`, so it is not the normal path, and the safe side to take then is "reissue".
      */
     public function isExpired(?int $now = null, int $skew = 30): bool
     {
@@ -131,12 +131,12 @@ final readonly class TokenSet implements \JsonSerializable
     }
 
     /**
-     * ⚠️ 덤프 계열(`var_dump`·`print_r`·`debug_zval_dump`)은 `__toString` 과 `jsonSerialize` 를
-     * **우회해 프로퍼티를 직접 읽는다**. 이 훅이 그 경로를 덮는다(PHP 8.3.32 실측 — `print_r` 도
-     * 이 훅을 존중한다. ⚠️ **`var_export` 는 존중하지 않고 private 까지 원문으로 찍는다** —
-     * 그것은 훅으로 막을 수 없는 경계다).
+     * ⚠️ The dump family (`var_dump` · `print_r` · `debug_zval_dump`) **bypasses `__toString` and `jsonSerialize` and
+     * reads the properties directly**. This hook covers that path (measured on PHP 8.3.32 — `print_r` honors this hook
+     * too. ⚠️ **`var_export` does not honor it and prints even the private ones verbatim** — that is a boundary no hook
+     * can close).
      *
-     * 마스킹 정의를 두 곳에 두지 않는다 — 이미 마스킹된 `jsonSerialize()` 에 위임한다.
+     * The masking is not defined in two places — this delegates to `jsonSerialize()`, which is already masked.
      *
      * @return array<string, mixed>
      */

@@ -25,10 +25,11 @@ use Xzawed\Keycloak\Token\TokenSet;
 use Xzawed\Keycloak\Token\ValidatedToken;
 
 /**
- * 인증 파사드 — league/oauth2-client + stevenmaguire/oauth2-keycloak을 감싸고
- * introspect/logout(RFC 7662 + 백채널)은 손수 구현한다. validate()는 T7 JwtValidator에 위임.
+ * Authentication facade — wraps league/oauth2-client + stevenmaguire/oauth2-keycloak and implements
+ * introspect/logout (RFC 7662 + back-channel) by hand. validate() is delegated to the T7 JwtValidator.
  *
- * 네트워크 경계 모듈 — 커버리지 게이트 omit(phpunit.xml). 전체 흐름은 Task 11 통합테스트로 검증.
+ * Network-boundary module — omitted from the coverage gate (phpunit.xml). The full flow is verified by the Task 11
+ * integration tests.
  */
 final class AuthClient
 {
@@ -51,9 +52,9 @@ final class AuthClient
     }
 
     /**
-     * @param string|null $redirectUri 이 요청에만 쓸 콜백 URL. null이면 config 값.
-     *   ⚠️ 콜백이 여럿인 앱(멀티테넌트·환경별)이 클라이언트 하나로 그것을 섬기기 위한 자리다 —
-     *   나머지 여덟 SDK와 동형. **`exchangeCode()`에 같은 값을 넘겨야 한다**(RFC 6749 §4.1.3).
+     * @param string|null $redirectUri The callback URL to use for this request only. null means the config value.
+     *   ⚠️ This is where an app with several callbacks (multi-tenant, per environment) serves them with one client —
+     *   isomorphic with the other eight SDKs. **Pass the same value to `exchangeCode()`** (RFC 6749 §4.1.3).
      */
     public function createAuthorizationRequest(?string $redirectUri = null): AuthorizationRequest
     {
@@ -81,14 +82,16 @@ final class AuthClient
     }
 
     /**
-     * Authorization-code + PKCE 토큰 교환. 콜백에서 OAuth `state`를 createAuthorizationRequest()가 발급한
-     * 값과 대조하는 것은 호출자 책임이다(SDK는 무상태라 state를 검증하지 않는다 — Node/Go/C# SDK와 동형).
+     * Authorization-code + PKCE token exchange. Checking the OAuth `state` in the callback against the value issued by
+     * createAuthorizationRequest() is the caller's responsibility (the SDK is stateless, so it does not verify state —
+     * isomorphic with the Node/Go/C# SDKs).
      *
-     * `$expectedNonce`가 주어지면(createAuthorizationRequest()가 돌려준 nonce) 응답 id_token을
-     * JwtValidator로 서명·iss·aud·exp까지 검증한 뒤 nonce 클레임을 대조한다 — OIDC nonce 재생
-     * 방지. id_token 의 aud 는 `clientId` 로 대조한다(OIDC Core §3.1.3.7) — `expectedAudience` 는
-     * validate() 의 액세스 토큰에만 걸린다. 불일치·부재·검증실패는 모두 거부(fail-closed). null이면
-     * id_token 검증을 건너뛴다(여덟 언어 공통 패턴 — 필수로 만들지 않는다).
+     * When `$expectedNonce` is given (the nonce createAuthorizationRequest() returned), the response's id_token is
+     * validated with JwtValidator through signature · iss · aud · exp, and then its nonce claim is compared — OIDC nonce
+     * replay protection. The id_token's aud is checked against `clientId` (OIDC Core §3.1.3.7) — `expectedAudience`
+     * applies only to validate()'s access token. A mismatch, an absence and a validation failure are all rejected
+     * (fail-closed). With null, id_token validation is skipped (a pattern common to eight languages — it is not made
+     * mandatory).
      */
     public function exchangeCode(
         #[\SensitiveParameter] string $code,

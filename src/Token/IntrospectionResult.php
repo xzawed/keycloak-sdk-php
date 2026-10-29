@@ -14,7 +14,7 @@ final readonly class IntrospectionResult
         public array $claims = [],
     ) {}
 
-    /** @param array<string,mixed> $r RFC 7662 introspection 응답 */
+    /** @param array<string,mixed> $r RFC 7662 introspection response */
     public static function fromArray(array $r): self
     {
         return new self(

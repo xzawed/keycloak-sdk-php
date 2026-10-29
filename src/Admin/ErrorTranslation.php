@@ -25,28 +25,34 @@ use Xzawed\Keycloak\Internal\OAuthErrorCode;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
 
 /**
- * fschmtt는 Guzzle 예외를 변환하지 않으므로(404/409/403 전부 raw ClientException) 경계에서 여기로 변환한다.
+ * fschmtt does not translate Guzzle exceptions (404/409/403 are all a raw ClientException), so they are translated here,
+ * at the boundary.
  *
- * ⚠️ 하위 예외는 원본이 아니라 `SanitizedCause` 사본으로 달고, 메시지는 여기서 만든다(`AuthClient` 와 같은 규칙 — 근거는
- * `SanitizedCause` 의 docblock). 원본을 달면 admin 의 토큰 부여(fschmtt 가 한다)나 admin 요청이 실패할 때 Guzzle 메시지의
- * 응답 본문 요약과 하위 프레임의 인자 — 토큰 응답 본문·`client_secret` 폼·`Bearer` 헤더·보낸 representation — 가
- * `getMessage()`·`(string)$e`·`var_dump`·`print_r` 로 찍혔다(실측 2026-10-02). 남기는 것: 타입 · HTTP 상태(`getStatusCode()`) ·
- * 토큰 부여 오류의 OAuth `error` 코드(`OAuthErrorCode` 모양일 때만). 파사드가 보내는 입력(representation·검색 조건)은 각
- * 자원 메서드가 `#[\SensitiveParameter]` 로 가린다 — 경로로 가는 식별자는 원인의 URL 처럼 남는다.
+ * ⚠️ The underlying exception is attached not as the original but as a `SanitizedCause` copy, and the message is built here
+ * (the same rule as `AuthClient` — the rationale is in `SanitizedCause`'s docblock). With the original attached, when admin's
+ * token grant (fschmtt performs it) or an admin request failed, the response-body summary in Guzzle's message and the
+ * arguments of the underlying frames — the token response body, the `client_secret` form, the `Bearer` header, the
+ * representation sent — were printed through `getMessage()` · `(string)$e` · `var_dump` · `print_r` (measured 2026-10-02).
+ * What is kept: the type · the HTTP status (`getStatusCode()`) · the OAuth `error` code of a token-grant error (only when
+ * it has the `OAuthErrorCode` shape). The input the facade sends (representations, search criteria) is hidden by each
+ * resource method with `#[\SensitiveParameter]` — identifiers that go into the path remain visible, as the cause's URL does.
  *
- * ⚠️ fschmtt 0.44 는 버전을 알기 전의 자원 접근마다 먼저 하는 버전 탐지(`GET /admin/serverinfo` — 첫 admin 토큰 부여가 거기서
- * 난다)에서 난 실패를 **전부** `VersionDetectionException` 으로 감싸 원인으로 단다(`Keycloak::fetchVersion`). 감싼 채로는
- * 토큰 부여의 401·전송 실패·상한 거부가 맨 아래 그물로 떨어졌다(#750: 「admin request failed unexpectedly」, 상태 null).
- * 그래서 그 원인을 꺼내 같은 사다리에 다시 던진다 —
- * 0.43 이 그대로 던지던 바로 그 객체라 타입·상태·메시지·원인 사본이 같다. 원인이 없으면(systemInfo 를 감춘 serverinfo) 감싼 것
- * 그대로 그물로 간다 — 0.43 에서는 null 위의 호출이 낸 `\Error` 가 같은 그물로 갔다(`AdminFacadeErrorLeakTest` 의 serverinfo 두 칸).
+ * ⚠️ fschmtt 0.44 wraps **every** failure of the version detection it runs first on each resource access made before the
+ * version is known (`GET /admin/serverinfo` — the first admin token grant happens there) in a
+ * `VersionDetectionException` and attaches it as the cause (`Keycloak::fetchVersion`). While wrapped, a token-grant 401,
+ * a transport failure and a cap rejection fell through to the bottom net (#750: "admin request failed unexpectedly",
+ * status null). So the cause is taken out and thrown down the same ladder again —
+ * it is the very object 0.43 threw as is, so the type, status, message and cause copy are the same. Without a cause (a
+ * serverinfo that hides systemInfo) the wrapper goes to the net as it is — in 0.43 the `\Error` raised by a call on null
+ * went to the same net (the two serverinfo cells of `AdminFacadeErrorLeakTest`).
  */
 final class ErrorTranslation
 {
     /**
-     * fschmtt 가 admin 토큰을 받는 자리 — `{base}/realms/{realm}` 뒤의 꼬리. ⚠️ 꼬리만으로는 못 가른다 — 경로로 가는 식별자가
-     * admin REST 경로도 이것으로 끝나게 만든다(fschmtt 는 경로 값을 인코딩하지 않는다). 가르는 것은 Bearer 다(`failed()`).
-     * `AdminClient` 의 토큰 응답 상한도 같은 규칙으로 토큰 부여를 고른다.
+     * Where fschmtt gets the admin token — the tail after `{base}/realms/{realm}`. ⚠️ The tail alone cannot tell them apart —
+     * an identifier that goes into the path can make an admin REST path end with this too (fschmtt does not encode path
+     * values). What tells them apart is the Bearer (`failed()`). The token response cap in `AdminClient` also picks out the
+     * token grant by the same rule.
      */
     public const TOKEN_PATH = '/protocol/openid-connect/token';
 
@@ -54,7 +60,8 @@ final class ErrorTranslation
     private const MAX_ERROR_BODY = 8192;
 
     /**
-     * ⚠️ `$fn` 은 보내는 representation(비밀번호·client secret)을 붙잡은 클로저다 — SDK 예외 트레이스의 #0 프레임 인자다.
+     * ⚠️ `$fn` is a closure that captures the representation being sent (password, client secret) — it is an argument of
+     * the #0 frame in the SDK exception's trace.
      *
      * @template T
      * @param callable():T $fn

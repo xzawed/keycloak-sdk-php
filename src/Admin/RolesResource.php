@@ -13,7 +13,7 @@ final class RolesResource
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
     /**
-     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     * ⚠️ The fschmtt client holds the credentials, so a dump printed the client secret verbatim (measured 2026-09-26).
      *
      * @return array<string, mixed>
      */
@@ -22,7 +22,7 @@ final class RolesResource
         return ['realm' => $this->realm];
     }
 
-    /** ⚠️ 보내는 representation 은 가린다(update 도) — 실패 오류의 트레이스 인자로 찍히지 않게(`UsersResource::create` 와 같은 규칙). */
+    /** ⚠️ The representation being sent is hidden (update too) — so it is not printed as a trace argument of a failure error (the same rule as `UsersResource::create`). */
     public function create(#[\SensitiveParameter] Role $role): void
     {
         ErrorTranslation::call(fn () => $this->kc->roles()->create($this->realm, $role));
@@ -44,12 +44,12 @@ final class RolesResource
     }
 
     /**
-     * 현재 이름으로 주소를 잡아 롤을 갱신한다. `$role` 의 name 에 새 이름을 주면 rename 이다.
+     * Updates the role, addressing it by its current name. Giving `$role` a new name makes it a rename.
      *
-     * ⚠️ **fschmtt `Roles::update` 를 쓰지 않는다** — 그쪽은 경로를 `$role->getName()` 에서
-     * 만들어 경로와 body 가 한 값에서 나오고, 그래서 rename 을 표현할 수 없다. 자매 8개 언어는
-     * 전부 (이름, representation) 두 인자를 받으므로 §4 동형도 이쪽이 맞다. 경위와 대체 경로는
-     * {@see RenamableRoles}.
+     * ⚠️ **It does not use fschmtt `Roles::update`** — that one builds the path from `$role->getName()`, so
+     * the path and the body come from one value, and therefore a rename cannot be expressed. The 8 sister languages
+     * all take two arguments (name, representation), so under §4 isomorphism, too, this side is right. For the background and the
+     * replacement path, see {@see RenamableRoles}.
      */
     public function update(string $name, #[\SensitiveParameter] Role $role): void
     {

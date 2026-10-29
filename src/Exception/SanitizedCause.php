@@ -14,22 +14,25 @@ use Psr\Http\Message\UriInterface;
 use Xzawed\Keycloak\Internal\OAuthErrorCode;
 
 /**
- * SDK 예외의 `getPrevious()` 자리에 하위 라이브러리 예외 **원본 대신** 달리는 정화된 사본이다(§4 — 하위
- * 타입은 공개 API 로 새지 않는다). 직접 던지지 않는다.
+ * A sanitized copy attached in an SDK exception's `getPrevious()` slot **instead of the original** underlying library
+ * exception (§4 — underlying types do not leak into the public API). It is never thrown directly.
  *
- * ⚠️ 원본을 그대로 달면 형식이 틀린·적대적인 IdP 응답이 원인 사슬로 샌다(실측 2026-09-26): league 의
- * `IdentityProviderException` 은 오류 응답 본문 전체를 쥐고 메시지에 `error_description` 을 싣고, Guzzle 의
- * `BadResponseException` 은 메시지에 응답 본문 앞부분을 싣고, 하위 예외의 **트레이스 인자**는 토큰 응답 배열·
- * 호출 옵션(refresh_token·code·Basic 헤더)·원문 JWT 를 쥔다 — `(string)$e`·`var_dump`·`print_r` 가 그 사슬을
- * 따라간다. `#[\SensitiveParameter]` 는 제3자 프레임에 닿지 않으므로 사본으로 바꾸는 것만이 경계에서 막는 길이다.
+ * ⚠️ Attaching the original as is leaks a malformed or hostile IdP response into the cause chain (measured 2026-09-26):
+ * league's `IdentityProviderException` holds the whole error response body and puts `error_description` in its message,
+ * Guzzle's `BadResponseException` puts the start of the response body in its message, and the underlying exception's
+ * **trace arguments** hold the token response array, the call options (refresh_token · code · Basic header) and the raw
+ * JWT — `(string)$e` · `var_dump` · `print_r` follow that chain. `#[\SensitiveParameter]` does not reach third-party
+ * frames, so replacing the original with a copy is the only way to stop this at the boundary.
  *
- * 사본이 남기는 것: 원본 클래스명(`originalClass`, 메시지 머리에도)·코드·파일·줄·**인자를 뺀** 트레이스·같은 규칙으로
- * 정화된 원인 사슬. 메시지는 셋으로 가른다 — HTTP 오류 응답은 상태·메서드·URL(쿼리·사용자정보 제외)만, OAuth 오류
- * 응답은 `error` 코드(`OAuthErrorCode` 모양일 때)만, 그 밖은 **감사한 하위 라이브러리 안에서 만든 메시지만** 옮긴다
- * (그 라이브러리들의 메시지는 입력을 인용하지 않는다 — ⚠️ 예외 둘: Guzzle 의 전송 실패는 요청 URL 을 쿼리째 인용해
- * `withoutQuery()` 가 같은 선으로 깎고, psr7 의 헤더 검증은 거부한 헤더 값을 통째로 인용해 `quotesAHeader()` 가 거둔다).
- * 소비자 핸들러·미들웨어처럼 그 밖에서 난 예외의 메시지는 무엇을 인용할지 모르므로 옮기지 않는다(Grok 레그 실측: 핸들러
- * 예외가 인용한 시크릿이 사슬로 찍혔다).
+ * What the copy keeps: the original class name (`originalClass`, also at the head of the message) · code · file · line ·
+ * the trace **without arguments** · the cause chain sanitized by the same rules. The message is split three ways — an
+ * HTTP error response keeps only the status, method and URL (without query and user info), an OAuth error response only
+ * the `error` code (when it has the `OAuthErrorCode` shape), and anything else carries over **only messages built inside
+ * the audited underlying libraries** (those libraries' messages do not quote their input — ⚠️ two exceptions: Guzzle's
+ * transport failure quotes the request URL including its query, which `withoutQuery()` trims to the same extent, and
+ * psr7's header validation quotes the rejected header value whole, which `quotesAHeader()` withholds). The message of
+ * an exception raised outside them, such as in a consumer handler or middleware, is not carried over, since there is no
+ * knowing what it quotes (measured by the Grok leg: a secret quoted by a handler exception was printed through the chain).
  */
 final class SanitizedCause extends \RuntimeException
 {
@@ -58,7 +61,8 @@ final class SanitizedCause extends \RuntimeException
     }
 
     /**
-     * 하위 예외를 SDK 예외의 `previous` 로 달 수 있는 사본으로 바꾼다. SDK 자신의 예외는 이미 경계를 지났으므로 그대로 둔다.
+     * Turns an underlying exception into a copy that can be attached as an SDK exception's `previous`. The SDK's own
+     * exceptions have already crossed the boundary, so they are left as they are.
      */
     public static function of(#[\SensitiveParameter] \Throwable $e): \Throwable
     {

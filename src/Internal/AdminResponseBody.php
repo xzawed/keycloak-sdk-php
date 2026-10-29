@@ -13,40 +13,48 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamInterface;
 
 /**
- * admin 응답 본문을 얼마나 받는가 — 등록부 admin-response-body-unbounded. fschmtt 가 읽지 않는 본문은 받지 않고(GET·HEAD 가 아닌
- * 요청의 2xx — 명령은 응답을 버리고 조회는 GET 뿐이다: `AdminResponseBodyTest` 의 전제 핀), 오류 본문(300 이상)은 토큰 응답 상한에서
- * 자른다 — `AdminClient::raw()` 의 요청도. GET 의 2xx 는 지금처럼 끝까지 받는다(사용자 목록은 정당하게 크다). 토큰 부여는 건드리지
- * 않는다(`TokenResponseCap` 의 몫).
+ * How much of an admin response body is received — registry admin-response-body-unbounded. A body fschmtt does not read is
+ * not received (the 2xx of a request other than GET·HEAD — commands discard the response and lookups are GET only: the
+ * premise pin in `AdminResponseBodyTest`), and an error body (300 and up) is cut at the token response cap — requests
+ * from `AdminClient::raw()` too. A GET's 2xx is received to the end, as now (user lists are legitimately large). The
+ * token grant is not touched (that is `TokenResponseCap`'s job).
  *
- * curl 은 전송이 끝나야 응답을 넘기므로(본문은 그 전에 싱크로 흘러든다) 전송 **중에** 정한다: `on_headers` 가 최종 응답의 상태를
- * 보고 — GET 이 아닌 2xx 에 본문이 있으면 전송을 끝내고(틀을 알린 본문은 머리에서, 그 밖은 첫 본문 바이트에서), 300 이상이면
- * 본문을 `TokenResponseCap::sink()` 로 받는다(상한 + 1 바이트를 담는 쓰기에서 짧게 답해 curl 은 전송을, 스트림 처리기는 복사를
- * 끝낸다). 그렇게 **스스로** 끝낸 전송의 거부만 머리로 받은 응답에 남긴 본문을 달아 되살린다 — 바깥의 `http_errors` 와
- * `Admin\ErrorTranslation` 이 상태로 고르도록. 그 밖의 거부(전송 실패)는 그대로 넘긴다.
+ * curl hands over the response only once the transfer ends (the body flows into the sink before that), so the decision is
+ * made **during** the transfer: `on_headers` looks at the final response's status — if a non-GET 2xx has a body it ends the
+ * transfer (a body whose framing was announced, at the head; any other, at the first body byte), and at 300 or above it
+ * receives the body with `TokenResponseCap::sink()` (it answers short on the write that holds cap + 1 bytes, so curl ends
+ * the transfer and the stream handler ends the copy). Only the rejection of a transfer it ended **itself** that way is
+ * revived, by attaching the kept body to the response received as the head — so that the outer `http_errors` and
+ * `Admin\ErrorTranslation` choose by status. Any other rejection (a transport failure) is passed on as is.
  *
- * ⚠️ curl 은 최종 응답이 아닌 머리에도 `on_headers` 를 부른다 — 중간 응답(`100 Continue` — Guzzle 은 1 MiB 이상인 요청 본문에
- * `Expect` 를 단다)과 프록시 터널의 `200 Connection established`(https 대상에 `HTTPS_PROXY`). 그것을 쓰기의 응답으로 보고 끊으면
- * 요청은 서버에 닿지 않은 채 성공으로 돌아온다(실측 — 둘 다 고치기 전 판이 그랬다). 그래서 1xx 는 건너뛰고(규격을 어겨 틀을 단
- * 것도), 틀(`framed`)이 없는 2xx 는 머리에서 끊지 않으며(규격대로인 CONNECT 200 에는 틀이 없다 — RFC 9110 §9.3.6), 프록시가 끼어들
- * 수 있는 요청은 아예 머리에서 끊지 않는다(`mayUseProxy`) — 규격을 어기고 그 200 에 틀을 다는 프록시의 머리는 원서버의 것과 가를 수
- * 없다(Grok 레그 2 지목 — 터널 너머 PUT 을 보내지도 않고 200 을 성공으로 돌려줬다). 머리에서 끊지 않은 2xx 는 본문 바이트가 오면
- * 첫 바이트에서 끊는다(그래서 틀이 없는 204 는 연결을 잃지 않는다) — CONNECT 의 응답은 싱크에 바이트를 넘기지 않는다. 그 대가로
- * 프록시 뒤에서는 본문 바이트 없이 멈춘 2xx 가 고치기 전처럼 읽기 타임아웃까지 붙든다.
- * ⚠️ CONNECT 의 머리를 숨기는 `CURLOPT_SUPPRESS_CONNECT_HEADERS` 는 쓰지 않는다 — Guzzle 의 curl 옵션 허용 목록 밖이라 요청마다
- * E_USER_DEPRECATED 를 내고 guzzlehttp/guzzle 8 은 거부한다(Grok 레그 3 지목 · 실측). 스트림 처리기에서는 PHP 의 http 래퍼가
- * CONNECT 의 머리를 읽고 버린다(php-src `ext/standard/http_fopen_wrapper.c`).
- * ⚠️ 본문이 없는 2xx(Keycloak 의 쓰기 응답 — 틀이 없는 204 · `Content-Length: 0` 인 201)는 머리에서 끊지 않는다 — 끊을 것이
- * 없고, 끊으면 curl 이 다음 요청에 쓸 연결만 잃는다.
- * ⚠️ 싱크에서 예외를 던지지 않는다 — curl 은 그 예외에도 본문을 끝까지 받았다(실측). 스트림 처리기가 싱크의 짧은 쓰기(상한 · 첫
- * 바이트 거부)에 복사를 멈추는 것은 guzzlehttp/psr7 2.11 이상이다(짧은 쓰기를 다시 쓰는 `copyToStream`) — 그 아래 판은 Content-Length
- * 를 알린 본문을 끝까지 읽고 쥐는 양만 상한이다.
+ * ⚠️ curl calls `on_headers` for heads that are not the final response too — an interim response (`100 Continue` —
+ * Guzzle adds `Expect` to a request body of 1 MiB or more) and a proxy tunnel's `200 Connection established`
+ * (`HTTPS_PROXY` for an https target). Taking that as the write's response and cutting returns the request as a success
+ * without it ever reaching the server (measured — the version before both fixes did that). So 1xx is skipped (including
+ * one framed in violation of the spec), a 2xx without framing (`framed`) is not cut at the head (a spec-conforming CONNECT
+ * 200 has no framing — RFC 9110 §9.3.6), and a request a proxy can step into is never cut at the head at all
+ * (`mayUseProxy`) — the head of a proxy that violates the spec and frames that 200 cannot be told apart from the origin
+ * server's (flagged by Grok leg 2 — it returned 200 as a success without even sending the PUT past the tunnel). A 2xx not
+ * cut at the head is cut at the first byte when body bytes arrive (so an unframed 204 does not lose the connection) — a
+ * CONNECT's response passes no bytes to the sink. The price: behind a proxy, a 2xx that stalls without body bytes holds on
+ * until the read timeout, as before the fix.
+ * ⚠️ `CURLOPT_SUPPRESS_CONNECT_HEADERS`, which hides the CONNECT head, is not used — it is outside Guzzle's curl option
+ * allow list, so it raises E_USER_DEPRECATED on every request and guzzlehttp/guzzle 8 rejects it (flagged by Grok leg 3 ·
+ * measured). With the stream handler, PHP's http wrapper reads and discards the CONNECT head (php-src
+ * `ext/standard/http_fopen_wrapper.c`).
+ * ⚠️ A 2xx without a body (Keycloak's write responses — an unframed 204 · a 201 with `Content-Length: 0`) is not cut at
+ * the head — there is nothing to cut, and cutting only makes curl lose the connection it would use for the next request.
+ * ⚠️ The sink does not throw — curl received the body to the end even with that exception (measured). The stream handler
+ * stops copying on the sink's short write (cap · first-byte refusal) from guzzlehttp/psr7 2.11 on (`copyToStream`, which
+ * retries a short write) — older versions read a body that announced its Content-Length to the end, and only the
+ * amount held is capped.
  *
  * @internal
  */
 final class AdminResponseBody
 {
     /**
-     * admin 핸들러 스택 미들웨어 — `$isTokenRequest` 가 고르는 요청(fschmtt 의 토큰 부여)은 그대로 보낸다.
+     * Admin handler-stack middleware — requests picked by `$isTokenRequest` (fschmtt's token grant) are sent as they are.
      *
      * @param \Closure(RequestInterface): bool $isTokenRequest
      * @return \Closure(callable(RequestInterface, array<string, mixed>): PromiseInterface): (\Closure(RequestInterface, array<string, mixed>): PromiseInterface)

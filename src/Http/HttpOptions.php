@@ -7,11 +7,11 @@ namespace Xzawed\Keycloak\Http;
 use Xzawed\Keycloak\KeycloakConfig;
 
 /**
- * SDK가 만드는 모든 Guzzle 클라이언트의 공통 옵션. 두 곳(KeycloakClient·Admin\AdminClient)이
- * 같은 배열을 각자 들고 있었는데, 하드닝 항목이 하나라도 어긋나면 그쪽 경로만 조용히 취약해진다 —
- * 한 곳으로 모아 그 가능성을 없애고, 동시에 테스트가 SDK의 설정을 직접 검사할 수 있게 한다.
+ * Common options for every Guzzle client the SDK creates. Two places (KeycloakClient · Admin\AdminClient) each held
+ * the same array, and if even one hardening item drifts apart, only that path silently becomes vulnerable —
+ * gathering them in one place removes that possibility and also lets tests inspect the SDK's settings directly.
  *
- * @internal 소비자용 API가 아니다. 하위 라이브러리 옵션 형태에 종속적이라 공개 계약으로 두지 않는다.
+ * @internal Not a consumer API. It depends on the underlying library's option shape, so it is not kept as a public contract.
  */
 final class HttpOptions
 {

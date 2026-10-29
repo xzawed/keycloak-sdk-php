@@ -12,16 +12,19 @@ use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
 /**
- * Bearer 의 문법 — 아홉 언어가 같은 규칙. 양끝의 SP·HTAB·CR·LF 만(NBSP·U+3000·VT·FF 는 아니다) 다듬고, 나머지가 RFC 6750
- * `b64token`(`1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`, ASCII)이어야 한다. @internal
+ * The Bearer grammar — the same rule in all nine languages. Only SP · HTAB · CR · LF are trimmed from both ends (not NBSP ·
+ * U+3000 · VT · FF), and the rest must be an RFC 6750 `b64token` (`1*( ALPHA / DIGIT / "-" / "." / "_" / "~" / "+" / "/" ) *"="`,
+ * ASCII). @internal
  *
- * 두 자리가 이 술어 하나를 쓴다. (1) admin 레인(`grantMiddleware`) — fschmtt 가 토큰을 스스로 받아 자기 저장소에 두고 헤더도 스스로
- * 만들어, SDK 는 보내는 값을 고쳐 쓸 수 없다(psr7 은 `new Request()` 에서 — 핸들러 스택보다 먼저 — 헤더 값을 검증하고 양끝 SP·HTAB 을
- * 다듬는다). 그래서 토큰 응답에서 **다듬을 필요가 없는** b64token 만 받는다. (2) `ClientCredentialsTokenProvider` — 자기 캐시라 다듬은
- * 값을 캐시한다.
+ * Two places use this one predicate. (1) The admin lane (`grantMiddleware`) — fschmtt gets the token itself, keeps it in its
+ * own store and builds the header itself, so the SDK cannot rewrite the value sent (psr7 validates the header value in
+ * `new Request()` — before the handler stack — and trims SP · HTAB from both ends). So from a token response it accepts only
+ * a b64token that **needs no trimming**. (2) `ClientCredentialsTokenProvider` — it is its own cache, so it caches the trimmed
+ * value.
  *
- * ⚠️ 이 술어 전에는 lcobucci 의 base64url 해석이 우연히 그 자리를 막았고, 그것은 sodium 확장에 달렸다 — sodium 이 없으면 lcobucci 가
- * 공백을 건너뛰어 앞이나 가운데에 SP·HTAB 을 실은 JWT 가 그대로 나갔다(실측 2026-10-29 — `Admin\AdminBearerGrammarTest`).
+ * ⚠️ Before this predicate, lcobucci's base64url parsing happened to block that spot, and that depended on the sodium
+ * extension — without sodium, lcobucci skipped whitespace, so a JWT carrying SP · HTAB at the front or in the middle went
+ * out as is (measured 2026-10-29 — `Admin\AdminBearerGrammarTest`).
  */
 final class BearerToken
 {
@@ -33,8 +36,8 @@ final class BearerToken
     private const REJECTION = 'xzawed_keycloak_bearer_grammar';
 
     /**
-     * Bearer 뒤에 실을 값(다듬은 토큰), 또는 실을 수 없으면 null. ⚠️ 기본 `trim()` 은 NUL·VT 도 다듬는다 — 집합을 적는다. 끝은
-     * `\z` 다 — `$` 는 끝 LF 앞에서도 맞는다.
+     * The value to put after Bearer (the trimmed token), or null if it cannot be sent. ⚠️ `trim()` with its default set also
+     * trims NUL · VT — so the set is spelled out. The end is `\z` — `$` also matches before a trailing LF.
      */
     public static function sendable(#[\SensitiveParameter] string $token): ?string
     {
@@ -44,13 +47,13 @@ final class BearerToken
     }
 
     /**
-     * admin 핸들러 스택 미들웨어 — `$isTokenGrant` 가 고르는 요청(fschmtt 의 토큰 부여)의 2xx 응답에서 문자열 `access_token` 이 다듬을
-     * 필요 없는 b64token 이 아니면 그 부여를 Guzzle `RequestException`(메시지 `GRANT_REFUSED` · 응답·원인 없음)으로 거부한다. fschmtt 가
-     * 받아 두기 전이라 캐시되지 않고(다음 호출이 다시 묻는다) admin REST 요청은 나가지 않는다. Guzzle 의 것인 이유는
-     * `TokenResponseCap::middleware` 와 같다 — `raw()` 소비자에게 그대로 닿는다. 문자열이 아닌 `access_token`·JSON 이 아닌 본문은 오늘처럼
-     * fschmtt 가 거부한다.
+     * Admin handler-stack middleware — in the 2xx response to a request picked by `$isTokenGrant` (fschmtt's token grant), if
+     * the string `access_token` is not a b64token that needs no trimming, it rejects that grant with a Guzzle `RequestException`
+     * (message `GRANT_REFUSED` · no response or cause). This is before fschmtt stores it, so nothing is cached (the next call
+     * asks again) and no admin REST request goes out. Why it is Guzzle's: the same as `TokenResponseCap::middleware` — it
+     * reaches a `raw()` consumer as is. A non-string `access_token` or a non-JSON body is rejected by fschmtt, as today.
      *
-     * ⚠️ 스택에서 `TokenResponseCap::middleware` 의 **바깥**에 둔다 — 상한이 판정한 본문을 본다.
+     * ⚠️ It goes **outside** `TokenResponseCap::middleware` in the stack — it sees the body the cap has judged.
      *
      * @param \Closure(RequestInterface): bool $isTokenGrant
      * @return \Closure(callable(RequestInterface, array<string, mixed>): PromiseInterface): (\Closure(RequestInterface, array<string, mixed>): PromiseInterface)
@@ -82,7 +85,7 @@ final class BearerToken
         };
     }
 
-    /** 이 미들웨어의 거부인가 — `Admin\ErrorTranslation` 이 다른 `RequestException`(전송 실패)과 가른다. */
+    /** Whether this is this middleware's rejection — `Admin\ErrorTranslation` tells it apart from other `RequestException`s (transport failures). */
     public static function isRejection(\Throwable $e): bool
     {
         return $e instanceof RequestException && ($e->getHandlerContext()[self::REJECTION] ?? null) === true;

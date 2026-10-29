@@ -15,15 +15,17 @@ $client = KeycloakClient::create(new KeycloakConfig(
     clientSecret: getenv('KC_CLIENT_SECRET') ?: 'it-secret',
 ));
 
-// 1) client-credentials 그랜트로 토큰 발급. TokenSet의 __toString()은 자동 마스킹된다(accessToken=***).
+// 1) Get a token with the client-credentials grant. TokenSet's __toString() is masked automatically (accessToken=***).
 $token = $client->auth()->clientCredentialsToken();
 echo "token type: {$token->tokenType}, expires in: {$token->expiresIn}s\n";
 
-// 2) 발급받은 액세스 토큰을 자체 강화 검증(RS256 핀·iss 정확일치·aud 포함검사·exp 필수·클록 스큐).
+// 2) Validate the issued access token with the self-hardened checks (RS256 pin · exact iss · aud membership · required exp ·
+//    clock skew).
 $validated = $client->auth()->validate($token->accessToken);
 echo "subject: {$validated->subject}, issuer: {$validated->issuer}\n";
 
-// 3) 관리 API — 사용자 생성. fschmtt의 create()는 void를 반환하므로 id가 필요하면 findIdByUsername()로 후속 조회한다.
+// 3) Admin API — create a user. fschmtt's create() returns void, so if you need the id, look it up afterwards with
+//    findIdByUsername().
 $client->admin()->users()->create(new User(username: 'demo-user', email: 'demo@example.com', enabled: true));
 echo "created demo-user\n";
 

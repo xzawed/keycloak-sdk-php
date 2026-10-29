@@ -18,8 +18,8 @@ use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\KeycloakConfigError;
 
 /**
- * fschmtt(admin REST client)를 감싸는 관리 파사드. 네트워크 경계 모듈 — 커버리지 게이트 omit(phpunit.xml).
- * 실제 CRUD는 Task 11 통합테스트로 검증.
+ * Admin facade wrapping fschmtt (the admin REST client). Network-boundary module — omitted from the coverage gate
+ * (phpunit.xml). The actual CRUD is verified by the Task 11 integration tests.
  */
 final class AdminClient
 {
@@ -53,8 +53,8 @@ final class AdminClient
     }
 
     /**
-     * ⚠️ fschmtt 클라이언트는 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
-     * 그 객체는 내보이지 않는다 — 필요하면 `raw()` 로 꺼낸다.
+     * ⚠️ The fschmtt client holds the credentials, so a dump printed the client secret verbatim (measured 2026-09-26).
+     * That object is not shown — take it out with `raw()` if you need it.
      *
      * @return array<string, mixed>
      */
@@ -88,7 +88,7 @@ final class AdminClient
         return new GroupsResource($this->kc, $this->realm);
     }
 
-    /** 탈출구 — 하위 fschmtt 클라이언트(문서화된 은닉성 예외). */
+    /** Escape hatch — the underlying fschmtt client (a documented hiding exception). */
     public function raw(): Keycloak
     {
         return $this->kc;

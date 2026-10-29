@@ -14,7 +14,7 @@ final class UsersResource
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
     /**
-     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     * ⚠️ The fschmtt client holds the credentials, so a dump printed the client secret verbatim (measured 2026-09-26).
      *
      * @return array<string, mixed>
      */
@@ -24,9 +24,10 @@ final class UsersResource
     }
 
     /**
-     * 생성 후 id를 얻으려면 search 후속(fschmtt create는 void).
+     * To get the id after creating, follow up with a search (fschmtt create is void).
      *
-     * ⚠️ 보내는 representation 은 비밀(credentials)을 쥘 수 있다 — 실패 오류의 트레이스 인자로 찍히지 않게 가린다(update 도).
+     * ⚠️ The representation being sent can hold secrets (credentials) — it is hidden so it is not printed as a trace
+     * argument of a failure error (update too).
      */
     public function create(#[\SensitiveParameter] User $user): void
     {
@@ -39,15 +40,15 @@ final class UsersResource
     }
 
     /**
-     * void — 자매 언어(Java/Kotlin/Python/Node/Go/Ruby/.NET)가 전부 값을 안 돌린다.
-     * fschmtt Users::update 도 void 라 버릴 것도 없다.
+     * void — the sister languages (Java/Kotlin/Python/Node/Go/Ruby/.NET) all return no value.
+     * fschmtt Users::update is void too, so there is nothing to discard.
      */
     public function update(string $userId, #[\SensitiveParameter] User $user): void
     {
         ErrorTranslation::call(fn () => $this->kc->users()->update($this->realm, $userId, $user));
     }
 
-    /** ⚠️ 검색 조건은 쿼리로 간다 — 원인 사본이 URL 의 쿼리를 빼듯 실패 오류의 트레이스 인자에서도 가린다(findIdByUsername 도). */
+    /** ⚠️ The search criteria go into the query — just as the cause copy strips the URL's query, they are hidden from a failure error's trace arguments too (findIdByUsername as well). */
     public function search(#[\SensitiveParameter] ?Criteria $criteria = null): UserCollection
     {
         return ErrorTranslation::call(fn (): UserCollection => $this->kc->users()->search($this->realm, $criteria));
@@ -58,7 +59,7 @@ final class UsersResource
         ErrorTranslation::call(fn () => $this->kc->users()->delete($this->realm, $userId));
     }
 
-    /** 편의: username으로 생성된 사용자 id 조회(create가 void라 필요). */
+    /** Convenience: looks up a created user's id by username (needed because create is void). */
     public function findIdByUsername(#[\SensitiveParameter] string $username): ?string
     {
         $found = $this->search(new Criteria(['username' => $username, 'exact' => true]));

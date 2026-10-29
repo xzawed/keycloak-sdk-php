@@ -10,23 +10,23 @@ use Xzawed\Keycloak\Exception\KeycloakConfigError;
  * 불변 설정. 시크릿은 PHP 관용상 string이며 마스킹으로 심층방어(char[] 소거는 PHP에서 불가 — 과대광고 금지).
  */
 /**
- * ⚠️ __toString 만으로는 부족하다 — 승격된 프로퍼티가 public 이라 json_encode() 가 clientSecret 을
- * 원문으로 뱉는다. JsonSerializable 을 함께 구현하는 이유다.
- * 한계: __debugInfo() 가 var_dump()/print_r()/debug_zval_dump() 를 덮지만 **var_export() 는
- * 덮지 못한다**(PHP 8.3.32 실측 — private 프로퍼티까지 원문으로 찍는다). get_object_vars()·
- * (array) 캐스트·foreach·공개 프로퍼티 읽기도 경계 밖이다. 과대광고하지 말 것 — 이것은
- * 우발적 로깅에 대한 심층 방어이지 기밀 경계가 아니다.
+ * ⚠️ __toString alone is not enough — the promoted properties are public, so json_encode() emits clientSecret
+ * verbatim. That is why JsonSerializable is implemented as well.
+ * Limit: __debugInfo() covers var_dump()/print_r()/debug_zval_dump() but **cannot cover
+ * var_export()** (measured on PHP 8.3.32 — it prints even private properties verbatim). get_object_vars(),
+ * an (array) cast, foreach and reading the public properties are also outside the boundary. Do not oversell this — it is
+ * defence in depth against accidental logging, not a confidentiality boundary.
  */
 final readonly class KeycloakConfig implements \JsonSerializable
 {
     /**
-     * JWKS 최소 재조회 간격 기본값의 **유일한 정의 자리**(초). DoS 증폭 상한이고 아홉 언어가
-     * 같은 값으로 정렬돼 있다 — `scripts/test/test-security-defaults.sh`가 아홉 언어 코드와
-     * 소비자 문서를 함께 대조한다.
+     * The **single definition site** of the default JWKS minimum refetch interval (seconds). It is the DoS amplification cap,
+     * and all nine languages are aligned on the same value — `scripts/test/test-security-defaults.sh` checks the nine
+     * languages' code and the consumer docs together.
      *
-     * ⚠️ 이 숫자를 다른 곳에 다시 적지 말 것. 예전에는 여기 30, `Jwks\JwksStore` 생성자에 60으로
-     * **두 번** 적혀 있었고, `JwksStore`는 `final class`에 public 생성자라 소비자가 직접 생성하면
-     * (파사드를 거치지 않으면) 문서가 말하는 30이 아니라 60을 받았다.
+     * ⚠️ Do not write this number anywhere else. It used to be written **twice** — 30 here and 60 in the `Jwks\JwksStore`
+     * constructor — and since `JwksStore` is a `final class` with a public constructor, a consumer who constructed it
+     * directly (not through the facade) got 60, not the 30 the docs state.
      */
     public const DEFAULT_JWKS_MIN_REFETCH_SECONDS = 30;
 
@@ -35,7 +35,7 @@ final readonly class KeycloakConfig implements \JsonSerializable
     /** @var list<string> */
     public array $scopes;
 
-    /** @var list<string> JWT 서명 검증 허용 알고리즘 핀(기본 RS256, ES256/PS256 realm용 설정 가능). */
+    /** @var list<string> Pin of the algorithms allowed for JWT signature verification (default RS256; configurable for ES256/PS256 realms). */
     public array $signatureAlgorithms;
 
     /**
@@ -53,13 +53,13 @@ final readonly class KeycloakConfig implements \JsonSerializable
         public int $clockSkew = 30,
         public ?string $redirectUri = null,
         array $signatureAlgorithms = ['RS256'],
-        /** 미해결 kid로 인한 JWKS 재조회의 최소 간격(초) — DoS 증폭 상한. 기본값은 위 상수. */
+        /** Minimum interval (seconds) between JWKS refetches caused by an unresolved kid — the DoS amplification cap. The default is the constant above. */
         public int $jwksMinRefetchSeconds = self::DEFAULT_JWKS_MIN_REFETCH_SECONDS,
         /**
-         * 토큰 aud에 들어있어야 할 값(기본 null = clientId). 기본 realm은 client-credentials 토큰의
-         * aud에 clientId를 넣지 않으므로, realm이 실제로 발급하는 리소스/오디언스를 지정하거나
-         * Keycloak 클라이언트에 audience 매퍼를 추가한다. 액세스 토큰(`validate()`)에만 걸린다 —
-         * `exchangeCode()` 의 id_token aud 는 언제나 clientId 로 대조한다(OIDC Core §3.1.3.7).
+         * The value the token's aud must contain (default null = clientId). A stock realm does not put clientId in a
+         * client-credentials token's aud, so either set the resource/audience the realm actually issues, or add an
+         * audience mapper to the Keycloak client. It applies only to access tokens (`validate()`) — the id_token aud in
+         * `exchangeCode()` is always checked against clientId (OIDC Core §3.1.3.7).
          */
         public ?string $expectedAudience = null,
     ) {
@@ -128,12 +128,12 @@ final readonly class KeycloakConfig implements \JsonSerializable
     }
 
     /**
-     * ⚠️ 덤프 계열(`var_dump`·`print_r`·`debug_zval_dump`)은 `__toString` 과 `jsonSerialize` 를
-     * **우회해 프로퍼티를 직접 읽는다**. 이 훅이 그 경로를 덮는다(PHP 8.3.32 실측 — `print_r` 도
-     * 이 훅을 존중한다. ⚠️ **`var_export` 는 존중하지 않고 private 까지 원문으로 찍는다** —
-     * 그것은 훅으로 막을 수 없는 경계다).
+     * ⚠️ The dump family (`var_dump` · `print_r` · `debug_zval_dump`) **bypasses `__toString` and `jsonSerialize` and
+     * reads the properties directly**. This hook covers that path (measured on PHP 8.3.32 — `print_r` honors this hook
+     * too. ⚠️ **`var_export` does not honor it and prints even the private ones verbatim** — that is a boundary no hook
+     * can close).
      *
-     * 마스킹 정의를 두 곳에 두지 않는다 — 이미 마스킹된 `jsonSerialize()` 에 위임한다.
+     * The masking is not defined in two places — this delegates to `jsonSerialize()`, which is already masked.
      *
      * @return array<string, mixed>
      */

@@ -14,7 +14,7 @@ final class ClientsResource
     public function __construct(private readonly Keycloak $kc, private readonly string $realm) {}
 
     /**
-     * ⚠️ fschmtt 클라이언트가 자격증명을 쥐고 있어 덤프가 클라이언트 시크릿을 원문으로 찍었다(실측 2026-09-26).
+     * ⚠️ The fschmtt client holds the credentials, so a dump printed the client secret verbatim (measured 2026-09-26).
      *
      * @return array<string, mixed>
      */
@@ -24,9 +24,10 @@ final class ClientsResource
     }
 
     /**
-     * fschmtt는 import(create 아님) — id를 세팅해야 내부 re-GET이 성립.
+     * fschmtt uses import (not create) — the id has to be set for the internal re-GET to work.
      *
-     * ⚠️ 보내는 representation 은 client secret 을 쥘 수 있다 — 실패 오류의 트레이스 인자로 찍히지 않게 가린다(update 도).
+     * ⚠️ The representation being sent can hold a client secret — it is hidden so it is not printed as a trace argument of
+     * a failure error (update too).
      */
     public function import(#[\SensitiveParameter] Client $client): Client
     {
@@ -38,7 +39,7 @@ final class ClientsResource
         return ErrorTranslation::call(fn (): Client => $this->kc->clients()->get($this->realm, $clientUuid));
     }
 
-    /** ⚠️ 검색 조건은 쿼리로 간다 — 원인 사본이 URL 의 쿼리를 빼듯 실패 오류의 트레이스 인자에서도 가린다. */
+    /** ⚠️ The search criteria go into the query — just as the cause copy strips the URL's query, they are hidden from a failure error's trace arguments too. */
     public function all(#[\SensitiveParameter] ?Criteria $criteria = null): ClientCollection
     {
         return ErrorTranslation::call(fn (): ClientCollection => $this->kc->clients()->all($this->realm, $criteria));
@@ -50,10 +51,10 @@ final class ClientsResource
     }
 
     /**
-     * void — fschmtt Clients::update 는 Client 를 재-GET 해 돌려주지만
-     * 파사드는 버린다. 자매 언어 update 는 전부 void/None/nil/Task/error
-     * (§4 동형). import 는 POST+재조회(생성)라 이름을 유지하고, 여기는
-     * PUT 이라 fschmtt 그대로 update 다.
+     * void — fschmtt Clients::update re-GETs the Client and returns it, but
+     * the facade discards it. The sister languages' update is void/None/nil/Task/error in every case
+     * (§4 isomorphism). import is POST + re-fetch (create), so it keeps its name; this one is a
+     * PUT, so it is update, as in fschmtt.
      */
     public function update(string $clientUuid, #[\SensitiveParameter] Client $client): void
     {

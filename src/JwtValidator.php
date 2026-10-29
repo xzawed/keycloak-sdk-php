@@ -13,22 +13,24 @@ use Xzawed\Keycloak\Jwks\JwksStore;
 use Xzawed\Keycloak\Token\ValidatedToken;
 
 /**
- * 자체강화 JWT 검증기: RS256 알고리즘 핀(헤더 불신)·none/미서명 거부·iss 정확일치·aud 포함검사·
- * exp 필수·nbf·클록 스큐·DoS-safe JWKS(JwksStore)를 강제한다.
- * firebase/php-jwt는 서명·exp·nbf 검증 프리미티브로만 사용하고, alg 사전 핀·iss·aud는 이 클래스가 강제한다.
+ * Self-hardened JWT validator: enforces the RS256 algorithm pin (the header is not trusted) · none/unsigned rejection ·
+ * exact iss match · aud membership check · required exp · nbf · clock skew · DoS-safe JWKS (JwksStore).
+ * firebase/php-jwt is used only as the signature/exp/nbf verification primitive; the up-front alg pin, iss and aud are
+ * enforced by this class.
  */
 final class JwtValidator
 {
     /**
-     * 받는 JWT 의 바이트 상한 — 넘으면 **어떤 분해·디코드보다 먼저** 거부한다.
+     * Byte cap on an incoming JWT — past it, the token is rejected **before any splitting or decoding**.
      *
-     * 이 경로는 서명을 보기 전에 토큰을 쪼개고 헤더·페이로드를 json_decode 한다. 상한이 없을 때 깊게 중첩한 JSON 배열을
-     * 실은 헤더는 토큰 바이트당 약 167 B 를 할당했고, 768 KiB 토큰 하나가 기본 `memory_limit` 128M 에서 치명 OOM 으로
-     * 요청을 끝냈다(넓은 배열이면 약 95 B · 1.5 MiB, 실측). 공격자가 일으키는 OOM 치명 오류는 PHP2Shell(CVE-2026-109618 · CVE-2026-109619)의 트리거이고, 패치된
-     * PHP 에서도 요청을 죽이는 DoS 다. 256000 은 .NET SDK 가 쓰는 Microsoft.IdentityModel 의 `DefaultMaximumTokenSizeInBytes`
-     * 와 같고, Keycloak 26.6 이 기본 설정으로 받는 가장 긴 Bearer(65,459 B)의 약 3.9 배다. 이 길이에서 잰 가장 비싼 모양
-     * (깊이 500 으로 중첩한 배열, 바이트당 약 86 B)은 22 MB 남짓이다 — `JwtValidatorTest` 가 기본 한도의 1/4 아래를
-     * 단언하므로 상한을 올리면 그 시험이 먼저 빨개진다.
+     * This path splits the token and json_decodes the header and payload before it looks at the signature. Without a cap, a
+     * header carrying a deeply nested JSON array allocated about 167 B per token byte, and a single 768 KiB token ended the
+     * request with a fatal OOM under the default `memory_limit` of 128M (a wide array: about 95 B · 1.5 MiB, measured). An
+     * attacker-triggered fatal OOM error is the trigger of PHP2Shell (CVE-2026-109618 · CVE-2026-109619), and even on a patched
+     * PHP it is a DoS that kills the request. 256000 equals Microsoft.IdentityModel's `DefaultMaximumTokenSizeInBytes`, which the
+     * .NET SDK uses, and is about 3.9 times the longest Bearer Keycloak 26.6 accepts with its default settings (65,459 B). The
+     * most expensive shape measured at this length (an array nested 500 deep, about 86 B per byte) is a little over 22 MB —
+     * `JwtValidatorTest` asserts it stays below 1/4 of the default limit, so raising the cap turns that test red first.
      */
     public const JWT_MAX_BYTES = 256000;
 
@@ -39,7 +41,7 @@ final class JwtValidator
     ) {}
 
     /**
-     * 액세스 토큰 검증 — 기대 aud 는 `expectedAudience`(설정 시), 미설정이면 `clientId`.
+     * Validates an access token — the expected aud is `expectedAudience` (when set), otherwise `clientId`.
      */
     public function validate(#[\SensitiveParameter] string $jwt): ValidatedToken
     {
@@ -47,13 +49,14 @@ final class JwtValidator
     }
 
     /**
-     * id_token 검증 — aud 는 `$clientId` 를 담아야 한다(OIDC Core §2·§3.1.3.7: id_token 의 aud 는 그것을 요청한
-     * 클라이언트다). `expectedAudience` 는 **보지 않는다** — 그것은 액세스 토큰의 리소스 서버 제한이다(RFC 9700
-     * §2.3). 나머지(alg 핀·kid·서명·exp 필수·클록 스큐·iss)는 validate() 와 같은 경로이고 JWKS 저장소도 같은 것이다.
-     * nonce 대조는 호출자 몫이다 — `AuthClient::exchangeCode()` 가 이것을 부르고 대조한다.
+     * Validates an id_token — its aud must contain `$clientId` (OIDC Core §2 · §3.1.3.7: an id_token's aud is the client
+     * that requested it). `expectedAudience` is **not consulted** — that is an access token's resource-server restriction
+     * (RFC 9700 §2.3). The rest (alg pin · kid · signature · required exp · clock skew · iss) is the same path as validate(),
+     * and the JWKS store is the same one too. Comparing the nonce is the caller's job — `AuthClient::exchangeCode()` calls
+     * this and compares it.
      *
-     * @throws KeycloakConfigError  `$clientId` 가 비었을 때
-     * @throws TokenValidationError 검증 실패
+     * @throws KeycloakConfigError  when `$clientId` is empty
+     * @throws TokenValidationError on a validation failure
      */
     public function validateIdToken(#[\SensitiveParameter] string $idToken, string $clientId): ValidatedToken
     {

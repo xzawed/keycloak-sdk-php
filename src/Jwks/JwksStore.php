@@ -14,8 +14,9 @@ use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 
 /**
- * DoS-safe JWKS 스토어: kid로 캐시, 수명(300초) 안에서는 미해결 kid에만 재조회, 재조회는 rate-limit.
- * 위조 서명(잘못된 kid) 스팸이 IdP를 때리는 미인증 DoS 증폭을 차단한다.
+ * DoS-safe JWKS store: caches by kid; within the lifetime (300 seconds) it refetches only for an unresolved kid, and the
+ * refetch is rate-limited.
+ * Blocks the unauthenticated DoS amplification in which forged-signature (wrong kid) spam hits the IdP.
  */
 final class JwksStore
 {
@@ -27,17 +28,18 @@ final class JwksStore
     private const JWKS_MAX_AGE_SECONDS = 300;
 
     /**
-     * JWKS 응답 본문의 바이트 상한. 51200 은 Nimbus `RemoteJWKSet.DEFAULT_HTTP_SIZE_LIMIT` 이고
-     * go(`jwksMaxBytes`)·rust(`JWKS_MAX_BYTES`)·ruby·java·kotlin 이 같은 수를 쓴다.
+     * Byte cap on the JWKS response body. 51200 is Nimbus's `RemoteJWKSet.DEFAULT_HTTP_SIZE_LIMIT`, and
+     * go (`jwksMaxBytes`) · rust (`JWKS_MAX_BYTES`) · ruby · java · kotlin use the same number.
      *
-     * ⚠️ 예전에는 상한이 없었고, 게다가 **상태 검사보다 먼저** `(string) $response->getBody()` 로
-     * 본문을 통째로 슬러프했다 — 손상된 IdP 의 500 거대 본문도 그대로 메모리에 올렸다.
+     * ⚠️ There used to be no cap, and on top of that the body was slurped whole with `(string) $response->getBody()`
+     * **before the status check** — even a huge 500 body from a compromised IdP went into memory as is.
      */
     public const JWKS_MAX_BYTES = 51200;
 
     /**
-     * 스트림을 한 번에 청하는 바이트의 최대치. ⚠️ `Content-Length` 로만 판정하면 그 헤더가 없거나 거짓인 응답을
-     * 놓친다 — 청크를 받으며 누적치가 상한을 넘는 순간 읽기를 끊는다(`readCapped()`).
+     * The most bytes requested from the stream at once. ⚠️ Judging by `Content-Length` alone misses a response whose header
+     * is missing or false — the read stops the moment the running total, received chunk by chunk, exceeds the cap
+     * (`readCapped()`).
      */
     public const JWKS_READ_CHUNK_BYTES = 8192;
 
@@ -77,10 +79,10 @@ final class JwksStore
     }
 
     /**
-     * @return array<string,mixed> 선택된 JWK
+     * @return array<string,mixed> the selected JWK
      *
-     * @throws TokenValidationError  kid 미해결(재조회 후에도)
-     * @throws KeycloakTransportError 네트워크 오류
+     * @throws TokenValidationError  kid unresolved (even after a refetch)
+     * @throws KeycloakTransportError network error
      */
     public function getKeyByKid(string $kid): array
     {

@@ -11,9 +11,11 @@ use Xzawed\Keycloak\Http\HttpOptions;
 use Xzawed\Keycloak\Jwks\JwksStore;
 
 /**
- * 통합 진입점: auth 즉시 조립(네트워크 없음), admin은 첫 admin() 호출 시 지연 생성(secret 필요) + 캐시.
+ * Unified entry point: auth is assembled eagerly (no network); admin is created lazily on the first admin() call
+ * (needs the secret) and cached.
  *
- * 네트워크 경계 모듈 — 커버리지 게이트 omit(phpunit.xml). 전체 흐름은 Task 11 통합테스트로 검증.
+ * Network-boundary module — omitted from the coverage gate (phpunit.xml). The full flow is verified by the Task 11
+ * integration tests.
  */
 final class KeycloakClient
 {

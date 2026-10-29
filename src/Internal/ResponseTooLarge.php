@@ -5,21 +5,24 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Internal;
 
 /**
- * league 가 받는 토큰 응답 본문(client_credentials·refresh_token·authorization_code)이 상한(`TokenResponseCap::TOKEN_RESPONSE_MAX_BYTES`)을
- * 넘었다 — league 의 호출 스택 **안에서**(`PkceKeycloakProvider`) 난 판정을 SDK 경계까지 나르는 운반체다. @internal
+ * A token response body league receives (client_credentials · refresh_token · authorization_code) exceeded the cap
+ * (`TokenResponseCap::TOKEN_RESPONSE_MAX_BYTES`) — the carrier that brings a verdict made **inside** league's call stack
+ * (`PkceKeycloakProvider`) to the SDK boundary. @internal
  *
- * ⚠️ 공개 API 로 나가지 않는다 — 던지는 곳은 `PkceKeycloakProvider` 뿐이고 그 프로바이더는 `AuthClient` 가 private 로만 쥔다(탈출구가
- * 없다). `AuthClient::getAccessToken` 이 이것을 받아 **새** `KeycloakTransportError`(같은 메시지, 원인 없음)로 바꾼다. 이 예외의
- * 트레이스는 league 의 `getAccessToken($grant, $options)` 프레임 인자(refresh_token·code)를 쥐므로 원인으로 달면 안 된다.
- * `\UnexpectedValueException` 을 잇는 것은 league 가 `getAccessToken()` 에 선언한 예외라서다(그 경계의 catch 가 죽은 갈래가 아니다).
+ * ⚠️ It does not go out to the public API — the only place that throws it is `PkceKeycloakProvider`, and `AuthClient` holds
+ * that provider only as a private (there is no escape hatch). `AuthClient::getAccessToken` catches this and turns it into a
+ * **new** `KeycloakTransportError` (same message, no cause). This exception's trace holds the frame arguments of league's
+ * `getAccessToken($grant, $options)` (refresh_token · code), so it must not be attached as a cause.
+ * It extends `\UnexpectedValueException` because that is the exception league declares on `getAccessToken()` (the catch at
+ * that boundary is not a dead branch).
  *
- * ⚠️ admin 레인은 이것을 쓰지 않는다 — 그 스택은 `AdminClient::raw()` 가 내보내는 fschmtt 의 것이라 거기서 던진 것은 탈출구를 쓰는
- * 소비자에게 그대로 닿는다(이 클래스를 썼을 때 실측으로 샜다). 그 자리는 Guzzle `RequestException` 으로 거부한다
- * (`TokenResponseCap::middleware`).
+ * ⚠️ The admin lane does not use this — that stack is fschmtt's, which `AdminClient::raw()` exposes, so what is thrown there
+ * reaches a consumer using the escape hatch as is (measured: it leaked when this class was used). That spot rejects with a
+ * Guzzle `RequestException` (`TokenResponseCap::middleware`).
  */
 final class ResponseTooLarge extends \UnexpectedValueException
 {
-    /** @param string $what 넘은 본문의 이름 — `token response` */
+    /** @param string $what name of the oversized body — `token response` */
     public function __construct(string $what)
     {
         parent::__construct(sprintf('%s exceeds %d bytes', $what, TokenResponseCap::TOKEN_RESPONSE_MAX_BYTES));

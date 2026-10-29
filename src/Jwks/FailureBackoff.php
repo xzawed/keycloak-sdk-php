@@ -5,24 +5,25 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Jwks;
 
 /**
- * 실패한 JWKS fetch 의 백오프 상태 기계.
+ * Backoff state machine for failed JWKS fetches.
  *
- * ⚠️ **`minRefetchIntervalSeconds`(30초)와 다른 축이다.** 30초 게이트는 *캐시가 찬 뒤* 미해결 kid
- * 홍수를 막는다. 이 클래스는 **캐시가 비어 있고 fetch 가 계속 실패할 때**를 막는다 — 그 자리에는
- * 게이트가 없어서, 측정상 20회 조회가 IdP 요청 20건을 그대로 냈다(2026-09-04 · 7개 언어 동일).
+ * ⚠️ **This is a different axis from `minRefetchIntervalSeconds` (30 seconds).** The 30-second gate stops a flood of
+ * unresolved kids *after the cache is filled*. This class stops the case where **the cache is empty and the fetch keeps
+ * failing** — there was no gate there, so in a measurement 20 lookups went out as 20 IdP requests (2026-09-04 · the same
+ * in 7 languages).
  *
- * ⚠️ **여기에 30초를 재사용하면 안 된다** — 일시적 503 한 번이 「30초간 어떤 토큰도 검증 불가」가
- * 된다. 그래서 짧게 시작해 지수적으로 늘리고 상한을 둔다.
+ * ⚠️ **Do not reuse the 30 seconds here** — a single transient 503 would become "no token can be validated for 30
+ * seconds". So it starts short, grows exponentially and has a cap.
  *
- * ⚠️ **sleep 하지 않는다.** 창 안에서는 IdP 를 때리지 않고 즉시 실패시킨다(negative cache).
- * 재시도 페이싱은 소비자 몫이다.
+ * ⚠️ **It does not sleep.** Inside the window it fails immediately without hitting the IdP (negative cache).
+ * Retry pacing is the consumer's job.
  *
- * ⚠️ **왜 `JwksStore` 안의 private 필드가 아니라 별도 클래스인가** — 시계를 주입해야 창을
- * 결정적으로 넘길 수 있는데(sleep 금지), 그 이음매를 `JwksStore` 의 **공개 생성자**에 얹으면
- * 테스트 전용 파라미터가 소비자 API 에 올라가고 `php-semver-checker` 가 V010(파라미터 추가)로
- * MAJOR 를 낸다. python `_internal/backoff.py` 와 같은 자리다.
+ * ⚠️ **Why a separate class rather than a private field inside `JwksStore`** — the clock has to be injected to step past
+ * the window deterministically (no sleeping), and putting that seam on `JwksStore`'s **public constructor** would put a
+ * test-only parameter on the consumer API, and `php-semver-checker` would report MAJOR for it as V010 (parameter added).
+ * It is the same spot as python's `_internal/backoff.py`.
  *
- * @internal 이 클래스는 SDK 내부 구현이다 — 공개 API 로 취급하지 않는다.
+ * @internal This class is an internal implementation detail of the SDK — do not treat it as public API.
  */
 final class FailureBackoff
 {
@@ -44,8 +45,8 @@ final class FailureBackoff
     private $jitter;
 
     /**
-     * @param null|callable():float $clock  기본은 monotonic 시계
-     * @param null|callable():float $jitter 기본은 [0.5, 1.0) 배수
+     * @param null|callable():float $clock  defaults to a monotonic clock
+     * @param null|callable():float $jitter defaults to a [0.5, 1.0) multiplier
      */
     public function __construct(?callable $clock = null, ?callable $jitter = null)
     {
@@ -65,7 +66,7 @@ final class FailureBackoff
         return $this->failures;
     }
 
-    /** 백오프 잔여 초. 0 이면 fetch 를 허용한다. */
+    /** Seconds of backoff remaining. 0 allows a fetch. */
     public function remaining(): float
     {
         if ($this->lastFailureAt === null) {
