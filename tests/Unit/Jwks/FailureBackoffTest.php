@@ -100,6 +100,34 @@ final class FailureBackoffTest extends TestCase
         self::assertSame(FailureBackoff::BASE_SECONDS * 0.5, $b->remaining());
     }
 
+    /**
+     * jitter 는 실패를 기록할 때 **한 번** 뽑는다. 검사마다 다시 뽑으면 같은 실패가 0.15 초에 한 번은 거부하고 한 번은 IdP 로
+     * 내보냈다(창 [0.1, 0.2) 안의 같은 순간) — 장애 중 요청이 설계의 최대 두 배가 된다. 뽑기는 양 끝을 번갈아 낸다.
+     */
+    public function testJitterIsDrawnOnceWhenTheFailureIsRecorded(): void
+    {
+        $now = 1000.0;
+        $draws = 0;
+        $b = new FailureBackoff(
+            static function () use (&$now): float {
+                return $now;
+            },
+            static function () use (&$draws): float {
+                return $draws++ % 2 === 0 ? 0.99 : 0.5;
+            },
+        );
+        $b->recordFailure();
+        $now += 0.15;
+        $seen = [];
+        for ($i = 0; $i < 6; $i++) {
+            $seen[] = $b->remaining();
+        }
+        self::assertSame(array_fill(0, 6, $seen[0]), $seen, '같은 순간의 검사가 다른 답을 냈다');
+        self::assertGreaterThan(0.0, $seen[0]);
+        $now += 0.01;
+        self::assertEqualsWithDelta($seen[0] - 0.01, $b->remaining(), 1e-9, '창의 끝이 검사 사이에 움직였다');
+    }
+
     public function testDefaultJitterStaysWithinTheBand(): void
     {
         // 100회면 밴드를 벗어나는 구현(예: 0..1)이 잡힌다.

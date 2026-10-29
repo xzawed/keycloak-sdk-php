@@ -32,6 +32,11 @@ final class FailureBackoff
     private int $failures = 0;
     /** monotonic 초. `time()`은 1초 해상도라 0.2초 창을 잴 수 없다. */
     private ?float $lastFailureAt = null;
+    /**
+     * 마지막 실패가 연 창의 길이(초). jitter 를 그 실패를 기록할 때 **한 번** 뽑아 고정한다 — 검사마다 다시 뽑으면 같은 실패가
+     * 같은 순간에 한 번은 거부하고 한 번은 IdP 로 내보낸다(창이 0.5× 쪽으로 줄어 장애 중 요청이 최대 두 배).
+     */
+    private float $windowSeconds = 0.0;
 
     /** @var callable():float */
     private $clock;
@@ -67,13 +72,14 @@ final class FailureBackoff
             return 0.0;
         }
 
-        return \max(0.0, $this->delay() - (($this->clock)() - $this->lastFailureAt));
+        return \max(0.0, $this->windowSeconds - (($this->clock)() - $this->lastFailureAt));
     }
 
     public function recordFailure(): void
     {
         $this->failures++;
         $this->lastFailureAt = ($this->clock)();
+        $this->windowSeconds = $this->delay();
     }
 
     public function recordSuccess(): void

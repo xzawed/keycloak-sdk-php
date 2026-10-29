@@ -14,11 +14,18 @@ use Xzawed\Keycloak\KeycloakConfig;
 use Xzawed\Keycloak\Exception\TokenValidationError;
 
 /**
- * DoS-safe JWKS 스토어: kid로 캐시, 미해결 kid에만 재조회, 재조회는 rate-limit.
+ * DoS-safe JWKS 스토어: kid로 캐시, 수명(300초) 안에서는 미해결 kid에만 재조회, 재조회는 rate-limit.
  * 위조 서명(잘못된 kid) 스팸이 IdP를 때리는 미인증 DoS 증폭을 차단한다.
  */
 final class JwksStore
 {
+    /**
+     * 성공한 적재로 얻은 키 집합의 수명(초) — 그 적재가 **끝난** 때부터 단조 시계로 잰다. 다 지나면 캐시는 콜드와 같다: 다음
+     * 조회가 같은 실패 백오프로 다시 받고, 실패하면 그 오류로 끝난다. ⚠️ 낡은 집합으로 돌아가지 않는다 — IdP 장애 중에도(닿지
+     * 않는 JWKS 와 거둔 키를 SDK 는 가를 수 없다). 성공한 강제 재조회도 수명을 다시 시작한다. 아홉 언어 공통.
+     */
+    private const JWKS_MAX_AGE_SECONDS = 300;
+
     /**
      * JWKS 응답 본문의 바이트 상한. 51200 은 Nimbus `RemoteJWKSet.DEFAULT_HTTP_SIZE_LIMIT` 이고
      * go(`jwksMaxBytes`)·rust(`JWKS_MAX_BYTES`)·ruby·java·kotlin 이 같은 수를 쓴다.
@@ -36,7 +43,8 @@ final class JwksStore
 
     /** @var array<string,array<string,mixed>> kid → JWK */
     private array $keys = [];
-    private bool $loadedOnce = false;
+    /** `$keys` 를 가져온 적재가 끝난 단조 시각(초) — 수명의 기준. null 이면 아직 적재하지 못했다. */
+    private ?float $fetchedAt = null;
     private ?int $lastRefetchAt = null;
 
     /**
@@ -44,6 +52,16 @@ final class JwksStore
      * 상태 기계와 그 근거는 {@see FailureBackoff} 가 소유한다.
      */
     private readonly FailureBackoff $backoff;
+
+    /**
+     * 단조 시계(초) — 키 집합의 수명과 실패 백오프가 이 시계를 읽는다. `time()` 은 1초 해상도의 벽시계라 쓰지 않는다.
+     *
+     * 시험 이음매다 — 시험은 리플렉션으로 바꿔 끼운다(sleep 금지). 공개 생성자에 얹지 않는 이유는 {@see FailureBackoff}
+     * 머리 주석(php-semver-checker V010)이다.
+     *
+     * @var \Closure(): float
+     */
+    private \Closure $clock;
 
     public function __construct(
         private readonly string $jwksUri,
@@ -54,7 +72,8 @@ final class JwksStore
         // 예전에는 그 경로가 문서의 30이 아니라 60을 받았다(2026-08-13 Task D1).
         private readonly int $minRefetchIntervalSeconds = KeycloakConfig::DEFAULT_JWKS_MIN_REFETCH_SECONDS,
     ) {
-        $this->backoff = new FailureBackoff();
+        $this->clock = static fn (): float => (float) \hrtime(true) / 1e9;
+        $this->backoff = new FailureBackoff(fn (): float => ($this->clock)());
     }
 
     /**
@@ -65,8 +84,10 @@ final class JwksStore
      */
     public function getKeyByKid(string $kid): array
     {
-        if (!$this->loadedOnce) {
-            $this->fetch();   // 초기 로드는 rate-limit 소모하지 않음(첫 키회전 허용)
+        $fetchedAt = $this->fetchedAt;
+        if ($fetchedAt === null || ($this->clock)() - $fetchedAt >= self::JWKS_MAX_AGE_SECONDS) {
+            // 초기 로드와 수명이 지난 집합은 같은 콜드 적재다 — rate-limit 을 소모하지 않고(첫 키회전 허용), 실패하면 그 오류로 끝난다
+            $this->fetch();
         }
         if (isset($this->keys[$kid])) {
             return $this->keys[$kid];
@@ -156,7 +177,7 @@ final class JwksStore
             throw new KeycloakTransportError('JWKS response contains no keys');
         }
         $this->keys = $map;
-        $this->loadedOnce = true;
+        $this->fetchedAt = ($this->clock)(); // 수명은 적재가 끝난 이 시각부터다(강제 재조회도 다시 시작한다)
     }
 
     /**
