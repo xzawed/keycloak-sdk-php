@@ -70,6 +70,8 @@ final class MalformedTokenResponseTest extends TestCase
      * 흐름 검사 — 변형마다 호출이 **실제로 실패했는가**와 그 SDK 분류(`auth`·`transport`). `ok` 는 SDK 가 그 응답을
      * 받아들였다는 뜻이다(누출 검사 대상이 아니다). ⚠️ 대조군: 가짜 IdP 가 변형을 안 주면 실패가 `ok` 로 바뀌어 여기서
      * 잡힌다. 분류는 수정 전과 같다 — 바뀐 것은 원래 `\TypeError` 가 새던 자리(b·b2 → `auth`, b3·c3 → 수용)뿐이다.
+     * ⚠️ 2026-11-02: 응답은 왔는데 쓸 토큰 응답이 아닌 것(비-JSON d·d2·d3·d4·d5, access_token 없음 b4)은 AuthClient 도
+     * provider 처럼 `auth` 다 — transport 는 네트워크 실패다(아홉 언어 측정과 판정은 그 PR 본문).
      *
      * @var array<string, array<string, string>>
      */
@@ -79,13 +81,15 @@ final class MalformedTokenResponseTest extends TestCase
         'b access_token int' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'b2 access_token object' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'b3 refresh_token int' => ['clientCredentialsToken' => 'ok', 'refresh' => 'ok', 'exchangeCode' => 'ok', 'provider.getToken' => 'ok'],
+        'b4 access_token absent' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'c expires_in string' => ['clientCredentialsToken' => 'transport', 'refresh' => 'transport', 'exchangeCode' => 'transport', 'exchangeCode+nonce' => 'transport', 'provider.getToken' => 'ok'],
         'c2 token_type array' => ['clientCredentialsToken' => 'ok', 'refresh' => 'ok', 'exchangeCode' => 'ok', 'provider.getToken' => 'ok'],
         'c3 expires_in float' => ['clientCredentialsToken' => 'ok', 'refresh' => 'ok', 'exchangeCode' => 'ok', 'provider.getToken' => 'ok'],
-        'd short non-JSON body' => ['clientCredentialsToken' => 'transport', 'refresh' => 'transport', 'exchangeCode' => 'transport', 'exchangeCode+nonce' => 'transport', 'provider.getToken' => 'auth'],
-        'd2 long non-JSON body' => ['clientCredentialsToken' => 'transport', 'refresh' => 'transport', 'exchangeCode' => 'transport', 'exchangeCode+nonce' => 'transport', 'provider.getToken' => 'auth'],
-        'd3 non-JSON body text/plain' => ['clientCredentialsToken' => 'transport', 'refresh' => 'transport', 'exchangeCode' => 'transport', 'exchangeCode+nonce' => 'transport', 'provider.getToken' => 'auth'],
-        'd4 500 non-JSON body text/html' => ['clientCredentialsToken' => 'transport', 'refresh' => 'transport', 'exchangeCode' => 'transport', 'exchangeCode+nonce' => 'transport', 'provider.getToken' => 'auth'],
+        'd short non-JSON body' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'd2 long non-JSON body' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'd3 non-JSON body text/plain' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'd4 500 non-JSON body text/html' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
+        'd5 503 non-JSON body text/html' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'e 400 error_description echo' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'e2 401 error body carrying tokens' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
         'e3 error code carries a token' => ['clientCredentialsToken' => 'auth', 'refresh' => 'auth', 'exchangeCode' => 'auth', 'exchangeCode+nonce' => 'auth', 'provider.getToken' => 'auth'],
@@ -243,6 +247,10 @@ final class MalformedTokenResponseTest extends TestCase
             ]), 'canaries' => [
                 'b3.AT' => ['LKb3AT-access-token-canary', true], 'b3.ID' => ['LKb3ID-id-token-canary', true],
             ], 'calls' => $noNonce],
+            // access_token 키가 아예 없다 — league 의 AccessToken 생성자가 SPL \InvalidArgumentException 을 던진다.
+            'b4 access_token absent' => ['ep' => 'token', 'status' => 200, 'type' => $json, 'body' => $enc([
+                'token_type' => 'Bearer', 'expires_in' => 300, 'refresh_token' => 'LKb4RT-refresh-token-canary',
+            ]), 'canaries' => ['b4.RT' => ['LKb4RT-refresh-token-canary', true]]],
             // (c) expires_in · token_type 의 타입이 틀렸다.
             'c expires_in string' => ['ep' => 'token', 'status' => 200, 'type' => $json, 'body' => $enc([
                 'access_token' => 'LKc1AT-access-token-canary', 'token_type' => 'Bearer', 'expires_in' => 'soon',
@@ -271,6 +279,9 @@ final class MalformedTokenResponseTest extends TestCase
                 'canaries' => ['d3.PLAIN' => ['LKd3PLAINbody', true]]],
             'd4 500 non-JSON body text/html' => ['ep' => 'token', 'status' => 500, 'type' => 'text/html', 'body' => 'LKd4HTMLbody-500-page',
                 'canaries' => ['d4.HTML' => ['LKd4HTMLbody-500-page', true]]],
+            // 503 은 league 가 500 과 다른 길로 읽는다(본문을 문자열로 돌려준 뒤 「Expected JSON」) — 프록시의 HTML 페이지 모양.
+            'd5 503 non-JSON body text/html' => ['ep' => 'token', 'status' => 503, 'type' => 'text/html', 'body' => 'LKd5HTMLbody-503-page',
+                'canaries' => ['d5.HTML' => ['LKd5HTMLbody-503-page', true]]],
             // (e) 오류 본문의 error_description 이 토큰을 되울린다.
             'e 400 error_description echo' => ['ep' => 'token', 'status' => 400, 'type' => $json, 'body' => $enc([
                 'error' => 'invalid_grant', 'error_description' => 'token LKe1ECHO-echoed-refresh-token is not active',

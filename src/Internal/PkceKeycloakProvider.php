@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Xzawed\Keycloak\Internal;
 
 use GuzzleHttp\Psr7\Utils;
+use League\OAuth2\Client\Grant\AbstractGrant;
+use League\OAuth2\Client\Token\AccessTokenInterface;
 use Psr\Http\Message\RequestInterface;
 use Psr\Http\Message\ResponseInterface;
 use Stevenmaguire\OAuth2\Client\Provider\Keycloak;
@@ -23,6 +25,25 @@ final class PkceKeycloakProvider extends Keycloak
     protected function getPkceMethod(): string
     {
         return self::PKCE_METHOD_S256;
+    }
+
+    /**
+     * league's `AccessToken` constructor throws an SPL `\InvalidArgumentException` when `access_token` is empty — that fell into
+     * `AuthClient`'s catch-all as a transport failure while `ClientCredentialsTokenProvider` called the same response an auth
+     * failure. A finished response with no usable access token is an auth failure, so the verdict is made here, before league,
+     * and carried by `TokenResponseUnusable`. Usable = a string other than `""` and `"0"` (the strings league's `empty()`
+     * refuses); a non-string used to reach `AuthClient::toTokenSet()`, which refused it with the same message.
+     *
+     * @param array<mixed> $response
+     */
+    protected function createAccessToken(array $response, AbstractGrant $grant): AccessTokenInterface
+    {
+        $access = $response['access_token'] ?? null;
+        if (!\is_string($access) || $access === '' || $access === '0') {
+            throw new TokenResponseUnusable();
+        }
+
+        return parent::createAccessToken($response, $grant);
     }
 
     /**

@@ -19,6 +19,7 @@ use Xzawed\Keycloak\Internal\PkceKeycloakProvider;
 use Xzawed\Keycloak\Internal\ResponseStalled;
 use Xzawed\Keycloak\Internal\ResponseTooLarge;
 use Xzawed\Keycloak\Internal\TokenResponseCap;
+use Xzawed\Keycloak\Internal\TokenResponseUnusable;
 use Xzawed\Keycloak\Token\AuthorizationRequest;
 use Xzawed\Keycloak\Token\IntrospectionResult;
 use Xzawed\Keycloak\Token\TokenSet;
@@ -290,11 +291,15 @@ final class AuthClient
         } catch (ResponseStalled) {
             // 토큰 응답이 끝을 알리기 전에 막혔다(`TokenResponseCap::read` — 앞부분으로 판정하지 않는다). 원인을 달지 않는 까닭은 위와 같다.
             throw new KeycloakTransportError('token response stalled before its end');
+        } catch (TokenResponseUnusable) {
+            // JSON 객체인데 쓸 access_token 이 없다(`PkceKeycloakProvider::createAccessToken`). 원인을 달지 않는 까닭은 위 둘과 같다.
+            throw new KeycloakAuthError('token response has no usable access_token');
         } catch (\UnexpectedValueException $e) {
             // league는 토큰 엔드포인트가 비-JSON/파싱불가 응답을 줄 때 SPL \UnexpectedValueException을
             // 던진다(IdentityProviderException이 아님 — OAuth 에러 바디가 아니라 응답 자체가 깨진 경우).
-            // JwksStore가 동일 상황(비-JSON 응답)을 KeycloakTransportError로 매핑하는 것과 동형.
-            throw new KeycloakTransportError('token endpoint returned unexpected response', previous: SanitizedCause::of($e));
+            // 응답이 끝까지 왔으므로 auth 다 — transport 는 네트워크 실패다. ClientCredentialsTokenProvider 와
+            // introspection 의 비-JSON 도 auth 다(아홉 언어 측정·판정: 그 PR 본문 · MalformedTokenResponseTest).
+            throw new KeycloakAuthError('token endpoint returned unexpected response', previous: SanitizedCause::of($e));
         } catch (\Throwable $e) {
             // league/oauth2-client 및 그 하위 의존성이 던질 수 있는 그 밖의 미분류 예외까지 전부
             // 여기로 수렴시켜 "getAccessToken을 벗어나는 미분류 하위 예외는 없다" 경계를 보장한다.
