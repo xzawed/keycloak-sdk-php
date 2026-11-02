@@ -1834,9 +1834,16 @@ final class HostilePathMatrixTest extends TestCase
         } elseif (file_exists($root . '/.git')) {
             $fails[] = 'W1 저장소 체크아웃인데 보안 기본값 가드를 못 읽었다';
         }
+        $line = sprintf('W1 손 목록 %d 항목 · 앵커 %d — calls() 의 SDK 공개 호출 %d · 보안 기본값 가드의 PHP 행위 앵커 %d 와 대조', count(self::HAND), count($anchors), $nCalls, count($found));
+        if ($script === false && !file_exists($root . '/.git')) {
+            // 저장소 밖(php/ 만 복사하는 하네스) — 조용히 「앵커 0 와 대조」로 끝나지 않게 ruby 와 같은 말로 알린다. 보고서는
+            // HP_MATRIX_PRINT 일 때만 찍히므로 건너뜀은 따로, 늘 찍는다(ruby 의 `$stdout.puts` 와 같은 자리).
+            $skip = 'W1: 저장소 밖에서 돌아 보안 기본값 가드 대조는 건너뛴다';
+            $line .= ' — ' . $skip;
+            fwrite(STDERR, $skip . "\n");
+        }
 
-        return ['line' => sprintf('W1 손 목록 %d 항목 · 앵커 %d — calls() 의 SDK 공개 호출 %d · 보안 기본값 가드의 PHP 행위 앵커 %d 와 대조', count(self::HAND), count($anchors), $nCalls, count($found)),
-            'fails' => $fails, 'compared' => $script !== false];
+        return ['line' => $line, 'fails' => $fails, 'compared' => $script !== false];
     }
 
     /** `tests/Unit` 아래 파일의 테스트 클래스에서 메서드 본문(없으면 null). 클래스는 경로에서 얻고, 파일이 맞는지 대조한다. */
